@@ -21,10 +21,20 @@
  *                                                                         *
  ***************************************************************************/
 """
-from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
+import numpy
+
+"""
+    For Windows Users:
+        this plugin requires geopandas, please make sure you have its dependencies (fiona) installed
+        
+"""
+import pydevd_pycharm
+
+from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, QVariant
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog, QProgressBar
-from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, QgsDistanceArea, QgsPointXY
+from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, QgsDistanceArea, QgsPointXY, QgsVectorLayer, \
+    QgsFields, QgsField, edit, QgsFeatureRequest
 
 # Initialize Qt resources from file resources.py
 from .resources import *
@@ -33,9 +43,47 @@ from .pandapower_import_dialog import ppImportDialog
 from .pandapower_export_dialog import ppExportDialog
 
 # install requirements
+import re
 import sys
 import pathlib
 import os.path
+
+from typing import Dict
+
+
+def _add_pp_fields_(fields: QgsFields):
+    strings = (QVariant.String, 'String')
+    reals = (QVariant.Double, 'Real')
+    types = {
+        'name': strings,
+        'vn_kv': reals,
+        'type': strings,
+        'zone': strings,
+        'in_service': strings,
+        'vm_pu': reals,
+        'va_degree': reals,
+        'p_mw': reals,
+        'q_mvar': reals,
+    }
+    for k in types:
+        if k not in fields.names():
+            fields.append(QgsField(name=k, type=types[k][0], typeName=types[k][1]))
+    pass
+
+
+def _generate_attributes_(net) -> Dict[str, Dict[str, str or float]]:
+    attr = {}
+    for k in net.bus.keys():
+        for ident in net.bus[k].keys():
+            if ident not in attr:
+                attr[str(ident)] = {'id': ident}
+            attr[str(ident)][k] = net.bus[k][ident]
+    for k in net.res_bus.keys():
+        for ident in net.res_bus[k].keys():
+            if ident not in attr:
+                attr[str(ident)] = {'id': ident}
+            attr[str(ident)][k] = net.res_bus[k][ident]
+    return attr
 
 
 class ppqgis:
@@ -97,7 +145,8 @@ class ppqgis:
 
         with open(os.path.join(plugin_dir, 'requirements.txt'), "r") as requirements:
             for dep in requirements.readlines():
-                dep = dep.strip().split("==")[0]
+                # part string at any ==, ~=, <=, >=
+                dep = re.split("[~=<>]=", dep.strip(), 1)[0]
                 try:
                     __import__(dep)
                     QgsMessageLog.logMessage("Trying to load {}".format(dep), level=Qgis.MessageLevel.Info)
@@ -123,16 +172,16 @@ class ppqgis:
         return QCoreApplication.translate('ppqgis', message)
 
     def add_action(
-        self,
-        icon_path,
-        text,
-        callback,
-        enabled_flag=True,
-        add_to_menu=True,
-        add_to_toolbar=True,
-        status_tip=None,
-        whats_this=None,
-        parent=None):
+            self,
+            icon_path,
+            text,
+            callback,
+            enabled_flag=True,
+            add_to_menu=True,
+            add_to_toolbar=True,
+            status_tip=None,
+            whats_this=None,
+            parent=None):
         """Add a toolbar icon to the toolbar.
 
         :param icon_path: Path to the icon for this action. Can be a resource
@@ -330,9 +379,9 @@ class ppqgis:
                                                    from_bus=bus_found_first,
                                                    to_bus=bus_found_last,
                                                    std_type=stdType,
-                                                   length_km=part.length()/1000.,
+                                                   length_km=part.length() / 1000.,
                                                    geodata=geo)
-                                    #QgsMessageLog.logMessage("Line from {0} to {1}".format(bus_found_first, bus_found_last),
+                                    # QgsMessageLog.logMessage("Line from {0} to {1}".format(bus_found_first, bus_found_last),
                                     #                         level=Qgis.MessageLevel.Info)
 
             filters = "pandapower networks (*.json)"
@@ -343,7 +392,6 @@ class ppqgis:
 
     def imprt(self):
         """Run method that performs all the real work"""
-
         # Create the dialog with elements (after translation) and keep reference
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
         if self.first_start_import:
@@ -359,12 +407,18 @@ class ppqgis:
         selected = "pandapower networks (*.json)"
         file = QFileDialog.getOpenFileName(None, "File Dialog", self.dir, filters, selected)[0]
 
+        pydevd_pycharm.settrace('localhost', port=34117, stdoutToServer=True, stderrToServer=True)
+
         if file:
             self.installer_func()
             import pandapower as pp
-            import pandapower.networks as networks
-            # net = pp.from_json(file)
-            net = networks.mv_oberrhein()
+            # import pandapower.networks as networks
+            import pandapower.plotting.geo as geo
+            net = pp.from_json(file)
+            # net = networks.mv_oberrhein()
+            # pp.plotting.plotly.geo_data_to_latlong(net, "epsg:31467")  # convert to wgs84
+            geo.convert_geodata_to_gis(net)  # for valid geojson, net needs geo info in wgs84
+
             self.dlg_import.BusLabel.setText("#Bus: " + str(len(net.bus)))
             self.dlg_import.LineLabel.setText("#Lines: " + str(len(net.line)))
             # show the dialog
@@ -373,6 +427,96 @@ class ppqgis:
             result = self.dlg_import.exec_()
             # See if OK was pressed
             if result:
+                layer_name = self.dlg_import.layerNameEdit.toPlainText()
                 # Do something useful here - delete the line containing pass and
                 # substitute with your code.
-                pass
+                root = QgsProject.instance().layerTreeRoot()
+                group = root.findGroup(layer_name)
+                if group is None:
+                    group = root.addGroup(layer_name)
+                bus_geodata = net["bus_geodata"]
+                line_geodata = net["line_geodata"]
+                bus_layer = QgsVectorLayer(bus_geodata.to_json(na='drop'), layer_name + "_bus", "ogr")
+                line_layer = QgsVectorLayer(line_geodata.to_json(na='drop'), layer_name + "_line", "ogr")
+                QgsProject.instance().addMapLayer(bus_layer, False)
+                QgsProject.instance().addMapLayer(line_layer, False)
+                group.addLayer(bus_layer)
+                group.addLayer(line_layer)
+                # Move layers above TileLayer
+                root.setHasCustomLayerOrder(True)
+                order = root.customLayerOrder()
+                order.insert(0, order.pop())
+                order.insert(0, order.pop())
+                root.setCustomLayerOrder(order)
+
+                # create fields for bus attributes
+                fields = bus_layer.fields()
+                _add_pp_fields_(fields=fields)
+
+                # get new attributes from pp network
+                attr = _generate_attributes_(net)
+                features = bus_layer.getFeatures()
+                changes = {}
+                for f in features:
+                    ind = f.attribute('id')
+                    if int(ind) in attr:
+                        changes[f.id] = attr[int(ind)]
+                    f.setFields(fields)
+                bus_layer.startEditing()
+                bus_layer.dataProvider().changeAttributeValues(changes)
+                bus_layer.commitChanges()
+
+                """
+                bus_values = net.bus.keys()
+                for name in bus_values:
+                    ids = net.bus[name].keys()
+                    for ind in ids:
+                        if ind not in changes:
+                            changes[ind] = {}
+                        changes[ind][name] = net.bus[name][ind]
+                res_bus_values = net.res_bus.keys()
+                for name in res_bus_values:
+                    ids = net.res_bus[name].keys()
+                    for ind in ids:
+                        if ind not in changes:
+                            changes[ind] = {}
+                        changes[ind][name] = net.res_bus[name][ind]
+                bus_layer.startEditing()
+                bus_layer.changeAttributeValues(changes)
+                bus_layer.commitChanges(stopEditing=True)
+                """
+                """
+                # FIXME: Max rec depth exceeded in this for
+                # Add info to all bus features
+                features = bus_layer.getFeatures()
+                for feature in features:
+                    ppid = int(feature.attribute("id"))
+                    feature.setFields(fields)
+                    feature['name'] = net.bus.name.get(ppid)
+                    feature['vn_kv'] = net.bus.vn_kv.get(ppid)
+                    feature['type'] = net.bus.type.get(ppid)
+                    feature['zone'] = net.bus.zone.get(ppid)
+                    feature['in_service'] = net.bus.in_service.get(ppid)
+                    feature['vm_pu'] = net.res_bus.vm_pu.get(ppid)
+                    feature['va_degree'] = net.res_bus.va_degree.get(ppid)
+                    feature['p_mw'] = net.res_bus.p_mw.get(ppid)
+                    feature['q_mvar'] = net.res_bus.q_mvar.get(ppid)
+
+                """
+                """
+                # create fields for line attributes
+                fields = line_layer.fields()
+                for k in net.line.keys():
+                    fields.append(QgsField(name=k))
+                for k in net.res_line.keys():
+                    fields.append(QgsField(name=k))
+
+                # Add info to all line features
+                features = line_layer.getFeatures()
+                for feature in features:
+                    ppid = int(feature.attribute("id"))
+                    feature.setFields(fields)
+                    for k in net.line.keys():
+                        feature[k] = net.line[k].get(ppid)
+                    for k in net.res_line.keys():
+                        feature[k] = net.res_line[k].get(ppid)"""
