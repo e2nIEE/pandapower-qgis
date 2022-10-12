@@ -21,10 +21,18 @@
  *                                                                         *
  ***************************************************************************/
 """
+
+"""
+    For Windows Users:
+        this plugin requires geopandas, please make sure you have its dependencies (fiona) installed
+        
+"""
+# TODO: Write a try for geopandas import and error out without crashing
+
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
 from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction, QFileDialog, QProgressBar
-from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, QgsDistanceArea, QgsPointXY
+from qgis.PyQt.QtWidgets import QAction, QFileDialog
+from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, QgsDistanceArea, QgsPointXY, QgsVectorLayer
 
 # Initialize Qt resources from file resources.py
 from .resources import *
@@ -33,6 +41,7 @@ from .pandapower_import_dialog import ppImportDialog
 from .pandapower_export_dialog import ppExportDialog
 
 # install requirements
+import re
 import sys
 import pathlib
 import os.path
@@ -97,7 +106,8 @@ class ppqgis:
 
         with open(os.path.join(plugin_dir, 'requirements.txt'), "r") as requirements:
             for dep in requirements.readlines():
-                dep = dep.strip().split("==")[0]
+                # part string at any ==, ~=, <=, >=
+                dep = re.split("[~=<>]=", dep.strip(), 1)[0]
                 try:
                     __import__(dep)
                     QgsMessageLog.logMessage("Trying to load {}".format(dep), level=Qgis.MessageLevel.Info)
@@ -123,16 +133,16 @@ class ppqgis:
         return QCoreApplication.translate('ppqgis', message)
 
     def add_action(
-        self,
-        icon_path,
-        text,
-        callback,
-        enabled_flag=True,
-        add_to_menu=True,
-        add_to_toolbar=True,
-        status_tip=None,
-        whats_this=None,
-        parent=None):
+            self,
+            icon_path,
+            text,
+            callback,
+            enabled_flag=True,
+            add_to_menu=True,
+            add_to_toolbar=True,
+            status_tip=None,
+            whats_this=None,
+            parent=None):
         """Add a toolbar icon to the toolbar.
 
         :param icon_path: Path to the icon for this action. Can be a resource
@@ -330,9 +340,9 @@ class ppqgis:
                                                    from_bus=bus_found_first,
                                                    to_bus=bus_found_last,
                                                    std_type=stdType,
-                                                   length_km=part.length()/1000.,
+                                                   length_km=part.length() / 1000.,
                                                    geodata=geo)
-                                    #QgsMessageLog.logMessage("Line from {0} to {1}".format(bus_found_first, bus_found_last),
+                                    # QgsMessageLog.logMessage("Line from {0} to {1}".format(bus_found_first, bus_found_last),
                                     #                         level=Qgis.MessageLevel.Info)
 
             filters = "pandapower networks (*.json)"
@@ -362,9 +372,13 @@ class ppqgis:
         if file:
             self.installer_func()
             import pandapower as pp
-            import pandapower.networks as networks
-            # net = pp.from_json(file)
-            net = networks.mv_oberrhein()
+            # import pandapower.networks as networks
+            import pandapower.plotting.geo as geo
+            net = pp.from_json(file)
+            # net = networks.mv_oberrhein()
+            # pp.plotting.plotly.geo_data_to_latlong(net, "epsg:31467")  # convert to wgs84
+            geo.convert_geodata_to_gis(net)  # for valid geojson, net needs geo info in wgs84
+
             self.dlg_import.BusLabel.setText("#Bus: " + str(len(net.bus)))
             self.dlg_import.LineLabel.setText("#Lines: " + str(len(net.line)))
             # show the dialog
@@ -373,6 +387,24 @@ class ppqgis:
             result = self.dlg_import.exec_()
             # See if OK was pressed
             if result:
+                layer_name = self.dlg_import.layerNameEdit.toPlainText()
                 # Do something useful here - delete the line containing pass and
                 # substitute with your code.
-                pass
+                root = QgsProject.instance().layerTreeRoot()
+                group = root.findGroup(layer_name)
+                if group is None:
+                    group = root.addGroup(layer_name)
+                bus_geodata = net["bus_geodata"]
+                line_geodata = net["line_geodata"]
+                bus_layer = QgsVectorLayer(bus_geodata.to_json(na='drop'), layer_name + "_bus", "ogr")
+                line_layer = QgsVectorLayer(line_geodata.to_json(na='drop'), layer_name + "_line", "ogr")
+                QgsProject.instance().addMapLayer(bus_layer, False)
+                QgsProject.instance().addMapLayer(line_layer, False)
+                group.addLayer(bus_layer)
+                group.addLayer(line_layer)
+                # Move layers above TileLayer
+                root.setHasCustomLayerOrder(True)
+                order = root.customLayerOrder()
+                order.insert(0, order.pop())
+                order.insert(0, order.pop())
+                root.setCustomLayerOrder(order)
