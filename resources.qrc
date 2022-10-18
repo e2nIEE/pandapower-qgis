@@ -1,5 +1,8 @@
 <RCC>
     <qresource prefix="/plugins/pandapower_qgis" >
         <file>icon.png</file>
+        <file>pp.svg</file>
+        <file>pp_import.svg</file>
+        <file>pp_export.svg</file>
     </qresource>
 </RCC>
