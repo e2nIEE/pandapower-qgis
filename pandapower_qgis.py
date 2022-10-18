@@ -28,13 +28,11 @@ import numpy
         this plugin requires geopandas, please make sure you have its dependencies (fiona) installed
         
 """
-import pydevd_pycharm
-
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, QVariant
 from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction, QFileDialog, QProgressBar
+from qgis.PyQt.QtWidgets import QAction, QFileDialog
 from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, QgsDistanceArea, QgsPointXY, QgsVectorLayer, \
-    QgsFields, QgsField, edit, QgsFeatureRequest
+    QgsFields, QgsField
 
 # Initialize Qt resources from file resources.py
 from .resources import *
