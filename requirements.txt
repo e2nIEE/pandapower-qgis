@@ -2,3 +2,5 @@ pandapower==2.9.0
 pydevd-pycharm~=222.4167.33
 geopandas
 numba
+pyproj
+geojson

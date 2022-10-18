@@ -407,17 +407,16 @@ class ppqgis:
         selected = "pandapower networks (*.json)"
         file = QFileDialog.getOpenFileName(None, "File Dialog", self.dir, filters, selected)[0]
 
-        pydevd_pycharm.settrace('localhost', port=34117, stdoutToServer=True, stderrToServer=True)
-
         if file:
             self.installer_func()
             import pandapower as pp
-            # import pandapower.networks as networks
-            import pandapower.plotting.geo as geo
+            import geo  # in a future version this should be replaced by pandapower.plotting.geo as geo
+            import geojson
             net = pp.from_json(file)
-            # net = networks.mv_oberrhein()
-            # pp.plotting.plotly.geo_data_to_latlong(net, "epsg:31467")  # convert to wgs84
-            geo.convert_geodata_to_gis(net)  # for valid geojson, net needs geo info in wgs84
+
+            nodes = geo.dump_to_geojson(net, epsg=4326, branch=False)
+            branches = geo.dump_to_geojson(net, epsg=4326, node=False)
+            print(geojson.dumps(branches))
 
             self.dlg_import.BusLabel.setText("#Bus: " + str(len(net.bus)))
             self.dlg_import.LineLabel.setText("#Lines: " + str(len(net.line)))
@@ -428,16 +427,16 @@ class ppqgis:
             # See if OK was pressed
             if result:
                 layer_name = self.dlg_import.layerNameEdit.toPlainText()
-                # Do something useful here - delete the line containing pass and
-                # substitute with your code.
                 root = QgsProject.instance().layerTreeRoot()
+                # check if group exists
                 group = root.findGroup(layer_name)
-                if group is None:
+                # create group if it does not exist
+                if not group:
                     group = root.addGroup(layer_name)
-                bus_geodata = net["bus_geodata"]
-                line_geodata = net["line_geodata"]
-                bus_layer = QgsVectorLayer(bus_geodata.to_json(na='drop'), layer_name + "_bus", "ogr")
-                line_layer = QgsVectorLayer(line_geodata.to_json(na='drop'), layer_name + "_line", "ogr")
+                # create bus and line layers
+                bus_layer = QgsVectorLayer(geojson.dumps(nodes), layer_name + "_bus", "ogr")
+                line_layer = QgsVectorLayer(geojson.dumps(branches), layer_name + "_line", "ogr")
+                # add layers to group
                 QgsProject.instance().addMapLayer(bus_layer, False)
                 QgsProject.instance().addMapLayer(line_layer, False)
                 group.addLayer(bus_layer)
@@ -448,75 +447,3 @@ class ppqgis:
                 order.insert(0, order.pop())
                 order.insert(0, order.pop())
                 root.setCustomLayerOrder(order)
-
-                # create fields for bus attributes
-                fields = bus_layer.fields()
-                _add_pp_fields_(fields=fields)
-
-                # get new attributes from pp network
-                attr = _generate_attributes_(net)
-                features = bus_layer.getFeatures()
-                changes = {}
-                for f in features:
-                    ind = f.attribute('id')
-                    if int(ind) in attr:
-                        changes[f.id] = attr[int(ind)]
-                    f.setFields(fields)
-                bus_layer.startEditing()
-                bus_layer.dataProvider().changeAttributeValues(changes)
-                bus_layer.commitChanges()
-
-                """
-                bus_values = net.bus.keys()
-                for name in bus_values:
-                    ids = net.bus[name].keys()
-                    for ind in ids:
-                        if ind not in changes:
-                            changes[ind] = {}
-                        changes[ind][name] = net.bus[name][ind]
-                res_bus_values = net.res_bus.keys()
-                for name in res_bus_values:
-                    ids = net.res_bus[name].keys()
-                    for ind in ids:
-                        if ind not in changes:
-                            changes[ind] = {}
-                        changes[ind][name] = net.res_bus[name][ind]
-                bus_layer.startEditing()
-                bus_layer.changeAttributeValues(changes)
-                bus_layer.commitChanges(stopEditing=True)
-                """
-                """
-                # FIXME: Max rec depth exceeded in this for
-                # Add info to all bus features
-                features = bus_layer.getFeatures()
-                for feature in features:
-                    ppid = int(feature.attribute("id"))
-                    feature.setFields(fields)
-                    feature['name'] = net.bus.name.get(ppid)
-                    feature['vn_kv'] = net.bus.vn_kv.get(ppid)
-                    feature['type'] = net.bus.type.get(ppid)
-                    feature['zone'] = net.bus.zone.get(ppid)
-                    feature['in_service'] = net.bus.in_service.get(ppid)
-                    feature['vm_pu'] = net.res_bus.vm_pu.get(ppid)
-                    feature['va_degree'] = net.res_bus.va_degree.get(ppid)
-                    feature['p_mw'] = net.res_bus.p_mw.get(ppid)
-                    feature['q_mvar'] = net.res_bus.q_mvar.get(ppid)
-
-                """
-                """
-                # create fields for line attributes
-                fields = line_layer.fields()
-                for k in net.line.keys():
-                    fields.append(QgsField(name=k))
-                for k in net.res_line.keys():
-                    fields.append(QgsField(name=k))
-
-                # Add info to all line features
-                features = line_layer.getFeatures()
-                for feature in features:
-                    ppid = int(feature.attribute("id"))
-                    feature.setFields(fields)
-                    for k in net.line.keys():
-                        feature[k] = net.line[k].get(ppid)
-                    for k in net.res_line.keys():
-                        feature[k] = net.res_line[k].get(ppid)"""
