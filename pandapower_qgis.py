@@ -46,43 +46,6 @@ import sys
 import pathlib
 import os.path
 
-from typing import Dict
-
-
-def _add_pp_fields_(fields: QgsFields):
-    strings = (QVariant.String, 'String')
-    reals = (QVariant.Double, 'Real')
-    types = {
-        'name': strings,
-        'vn_kv': reals,
-        'type': strings,
-        'zone': strings,
-        'in_service': strings,
-        'vm_pu': reals,
-        'va_degree': reals,
-        'p_mw': reals,
-        'q_mvar': reals,
-    }
-    for k in types:
-        if k not in fields.names():
-            fields.append(QgsField(name=k, type=types[k][0], typeName=types[k][1]))
-    pass
-
-
-def _generate_attributes_(net) -> Dict[str, Dict[str, str or float]]:
-    attr = {}
-    for k in net.bus.keys():
-        for ident in net.bus[k].keys():
-            if ident not in attr:
-                attr[str(ident)] = {'id': ident}
-            attr[str(ident)][k] = net.bus[k][ident]
-    for k in net.res_bus.keys():
-        for ident in net.res_bus[k].keys():
-            if ident not in attr:
-                attr[str(ident)] = {'id': ident}
-            attr[str(ident)][k] = net.res_bus[k][ident]
-    return attr
-
 
 class ppqgis:
     """QGIS Plugin Implementation."""
