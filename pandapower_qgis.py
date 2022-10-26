@@ -367,7 +367,7 @@ class ppqgis:
         filters = "pandapower networks (*.json)"
         selected = "pandapower networks (*.json)"
         file = QFileDialog.getOpenFileName(None, "File Dialog", self.dir, filters, selected)[0]
-        current_crs = QgsProject.instance().crs().authid()
+        current_crs = int(QgsProject.instance().crs().authid().split(':')[1])
 
         if file:
             self.installer_func()
@@ -393,8 +393,8 @@ class ppqgis:
                 except ValueError:
                     epsg = 4326
 
-                nodes = geo.dump_to_geojson(net, epsg_in=epsg, epsg_out=int(current_crs), branch=False)
-                branches = geo.dump_to_geojson(net, epsg_in=epsg, epsg_out=int(current_crs), node=False)
+                nodes = geo.dump_to_geojson(net, epsg_in=epsg, epsg_out=current_crs, branch=False)
+                branches = geo.dump_to_geojson(net, epsg_in=epsg, epsg_out=current_crs, node=False)
 
                 root = QgsProject.instance().layerTreeRoot()
                 # check if group exists
