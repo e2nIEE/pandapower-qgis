@@ -367,6 +367,7 @@ class ppqgis:
         filters = "pandapower networks (*.json)"
         selected = "pandapower networks (*.json)"
         file = QFileDialog.getOpenFileName(None, "File Dialog", self.dir, filters, selected)[0]
+        current_crs = QgsProject.instance().crs().authid()
 
         if file:
             self.installer_func()
@@ -375,8 +376,6 @@ class ppqgis:
             import geojson
             net = pp.from_json(file)
 
-            nodes = geo.dump_to_geojson(net, epsg=4326, branch=False)
-            branches = geo.dump_to_geojson(net, epsg=4326, node=False)
             # print(geojson.dumps(branches))
 
             self.dlg_import.BusLabel.setText("#Bus: " + str(len(net.bus)))
@@ -388,6 +387,15 @@ class ppqgis:
             # See if OK was pressed
             if result:
                 layer_name = self.dlg_import.layerNameEdit.toPlainText()
+
+                try:
+                    epsg = int(self.dlg_import.epsgEdit.toPlainText())
+                except ValueError:
+                    epsg = 4326
+
+                nodes = geo.dump_to_geojson(net, epsg_in=epsg, epsg_out=int(current_crs), branch=False)
+                branches = geo.dump_to_geojson(net, epsg_in=epsg, epsg_out=int(current_crs), node=False)
+
                 root = QgsProject.instance().layerTreeRoot()
                 # check if group exists
                 group = root.findGroup(layer_name)
