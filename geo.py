@@ -57,6 +57,7 @@ def dump_to_geojson(net, epsg_in=4326, epsg_out=4326, node=True, branch=True):
             # as line and bus can have same ids.
             for uid, row in net[table].iterrows():
                 prop = {}
+                prop['index'] = uid
                 for c in cols:
                     try:
                         prop[c] = float(row[c])
@@ -72,7 +73,7 @@ def dump_to_geojson(net, epsg_in=4326, epsg_out=4326, node=True, branch=True):
         if epsg_in != epsg_out:
             def geo_transformer(x):
                 d = transformer.transform(x[1], x[0])
-                return pd.Series([d[0], d[1], Point(d[0], d[1]), x[3]])
+                return pd.Series([d[1], d[0], Point(d[1], d[0]), x[3]])
 
             new = net.bus_geodata.apply(lambda x: geo_transformer(x), axis=1)
             new.columns = ["x", "y", "geometry", "coords"]
@@ -95,7 +96,7 @@ def dump_to_geojson(net, epsg_in=4326, epsg_out=4326, node=True, branch=True):
                 ret = []
                 for y in x:
                     d = transformer.transform(y[1], y[0])
-                    ret.append([d[0], d[1]])
+                    ret.append([d[1], d[0]])
                 # return pd.Series(ret, LineString(ret))
                 # return pd.Series(ret, x[1])
                 return ret
@@ -106,8 +107,9 @@ def dump_to_geojson(net, epsg_in=4326, epsg_out=4326, node=True, branch=True):
         props = {}
         for table in ['line', 'res_line']:
             cols = net[table].columns
-            prop = {}
             for uid, row in net[table].iterrows():
+                prop = {}
+                prop['index'] = uid
                 for c in cols:
                     try:
                         prop[c] = float(row[c])
