@@ -46,6 +46,10 @@ import sys
 import pathlib
 import os.path
 
+# suppress a warning from the pyproj4 package
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
 
 class ppqgis:
     """QGIS Plugin Implementation."""
