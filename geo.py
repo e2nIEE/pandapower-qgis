@@ -9,6 +9,7 @@ import sys
 import pandas as pd
 from pandapower.auxiliary import soft_dependency_error
 from shapely.geometry import Point, LineString
+import math
 
 try:
     from pyproj import Transformer
@@ -23,7 +24,7 @@ except ImportError:
     geojson_INSTALLED = False
 
 
-def dump_to_geojson(net, epsg=4326, node=True, branch=True):
+def dump_to_geojson(net, epsg_in=4326, epsg_out=4326, node=True, branch=True):
     """
     Dumps all primitive values from bus, bus_geodata, res_bus, line, line_geodata and res_line into a geojson object.
     :param net: The pandapower network
@@ -40,11 +41,11 @@ def dump_to_geojson(net, epsg=4326, node=True, branch=True):
     if not geojson_INSTALLED:
         soft_dependency_error(str(sys._getframe().f_code.co_name)+"()", "geojson")
 
-    if epsg != 4326:
+    if epsg_in != epsg_out:
         if not pyproj_INSTALLED:
             soft_dependency_error(str(sys._getframe().f_code.co_name)+"()", "pyproj")
 
-        transformer = Transformer.from_crs(epsg, 4326)
+        transformer = Transformer.from_crs(epsg_in, epsg_out)
 
     features = []
     # build geojson features for nodes
@@ -59,6 +60,8 @@ def dump_to_geojson(net, epsg=4326, node=True, branch=True):
                 for c in cols:
                     try:
                         prop[c] = float(row[c])
+                        if math.isnan(prop[c]):
+                            prop[c] = 'nan'
                     except (ValueError, TypeError):
                         prop[c] = str(row[c])
                 if uid not in props:
@@ -66,7 +69,7 @@ def dump_to_geojson(net, epsg=4326, node=True, branch=True):
                 props[uid].update(prop)
         # props = net.bus.to_dict(orient='records')
 
-        if epsg != 4326:
+        if epsg_in != epsg_out:
             def geo_transformer(x):
                 d = transformer.transform(x[1], x[0])
                 return pd.Series([d[0], d[1], Point(d[0], d[1]), x[3]])
@@ -87,7 +90,7 @@ def dump_to_geojson(net, epsg=4326, node=True, branch=True):
 
     # build geojson features for branches
     if branch:
-        if epsg != 4326:
+        if epsg_in != epsg_out:
             def geo_line_transformer(x):
                 ret = []
                 for y in x:
@@ -108,6 +111,8 @@ def dump_to_geojson(net, epsg=4326, node=True, branch=True):
                 for c in cols:
                     try:
                         prop[c] = float(row[c])
+                        if math.isnan(prop[c]):
+                            prop[c] = 'nan'
                     except (ValueError, TypeError):
                         prop[c] = str(row[c])
                 if uid not in props:
