@@ -6,11 +6,12 @@ https://github.com/e2nIEE/pandapower/blob/develop/pandapower/plotting/geo.py
 """
 
 import sys
-
+import pandas as pd
 from pandapower.auxiliary import soft_dependency_error
+from shapely.geometry import Point, LineString
 
 try:
-    from pyproj import Proj, transform
+    from pyproj import Transformer
     pyproj_INSTALLED = True
 except ImportError:
     pyproj_INSTALLED = False
@@ -20,26 +21,6 @@ try:
     geojson_INSTALLED = True
 except ImportError:
     geojson_INSTALLED = False
-
-
-def _convert_xy_epsg(x, y, epsg_in=4326, epsg_out=31467):
-    """
-    Converts the given x and y coordinates according to the defined epsg projections.
-    :param x: x-values of coordinates
-    :type x: iterable
-    :param y: y-values of coordinates
-    :type y: iterable
-    :param epsg_in: current epsg projection
-    :type epsg_in: int, default 4326 (= WGS84)
-    :param epsg_out: epsg projection to be transformed to
-    :type epsg_out: int, default 31467 (= Gauss-Krüger Zone 3)
-    :return: transformed_coords - x and y values in new coordinate system
-    """
-    if not pyproj_INSTALLED:
-        soft_dependency_error(str(sys._getframe().f_code.co_name)+"()", "pyproj")
-    in_proj = Proj(init='epsg:%i' % epsg_in)
-    out_proj = Proj(init='epsg:%i' % epsg_out)
-    return transform(in_proj, out_proj, x, y)
 
 
 def dump_to_geojson(net, epsg=4326, node=True, branch=True):
@@ -59,6 +40,12 @@ def dump_to_geojson(net, epsg=4326, node=True, branch=True):
     if not geojson_INSTALLED:
         soft_dependency_error(str(sys._getframe().f_code.co_name)+"()", "geojson")
 
+    if epsg != 4326:
+        if not pyproj_INSTALLED:
+            soft_dependency_error(str(sys._getframe().f_code.co_name)+"()", "pyproj")
+
+        transformer = Transformer.from_crs(epsg, 4326)
+
     features = []
     # build geojson features for nodes
     if node:
@@ -77,25 +64,42 @@ def dump_to_geojson(net, epsg=4326, node=True, branch=True):
                 if uid not in props:
                     props[uid] = {}
                 props[uid].update(prop)
+        # props = net.bus.to_dict(orient='records')
+
+        if epsg != 4326:
+            def geo_transformer(x):
+                d = transformer.transform(x[1], x[0])
+                return pd.Series([d[0], d[1], Point(d[0], d[1]), x[3]])
+
+            new = net.bus_geodata.apply(lambda x: geo_transformer(x), axis=1)
+            new.columns = ["x", "y", "geometry", "coords"]
+            net.bus_geodata = new
+
         for uid, row in net.bus_geodata.iterrows():
             if row.coords is not None:
                 # [(x, y), (x2, y2)] start and end of bus bar
-                if epsg == 4326:
-                    geom = geojson.LineString(row.coords)
-                else:
-                    [(x, y), (x2, y2)] = row.coords
-                    geom = geojson.LineString([_convert_xy_epsg(x, y, epsg_in=epsg, epsg_out=4326),
-                                               _convert_xy_epsg(x2, y2, epsg_in=epsg, epsg_out=4326)])
+                geom = geojson.LineString(row.coords)
             else:
                 # this is just a bus with x, y
-                if epsg == 4326:
-                    geom = geojson.Point((row.x, row.y))
-                else:
-                    geom = geojson.Point(_convert_xy_epsg(row.x, row.y, epsg_in=epsg, epsg_out=4326))
+                geom = geojson.Point((row.x, row.y))
+
             features.append(geojson.Feature(geometry=geom, id=uid, properties=props[uid]))
 
     # build geojson features for branches
     if branch:
+        if epsg != 4326:
+            def geo_line_transformer(x):
+                ret = []
+                for y in x:
+                    d = transformer.transform(y[1], y[0])
+                    ret.append([d[0], d[1]])
+                # return pd.Series(ret, LineString(ret))
+                # return pd.Series(ret, x[1])
+                return ret
+
+            net.line_geodata.coords = net.line_geodata.coords.apply(lambda x: geo_line_transformer(x))
+            net.line_geodata.geometry = net.line_geodata.coords.apply(lambda x: LineString(x))
+
         props = {}
         for table in ['line', 'res_line']:
             cols = net[table].columns
@@ -109,12 +113,10 @@ def dump_to_geojson(net, epsg=4326, node=True, branch=True):
                 if uid not in props:
                     props[uid] = {}
                 props[uid].update(prop)
+        # props = net.line.to_dict(orient='records')
+
         for uid, row in net.line_geodata.iterrows():
             coords = row.coords
-            if not epsg == 4326:
-                for i, [x, y] in enumerate(coords):
-                    x2, y2 = _convert_xy_epsg(x, y, epsg_in=epsg, epsg_out=4326)
-                    coords[i] = [x2, y2]
             geom = geojson.LineString(coords)
             features.append(geojson.Feature(geometry=geom, id=uid, properties=props[uid]))
 
