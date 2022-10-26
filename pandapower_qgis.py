@@ -377,7 +377,7 @@ class ppqgis:
 
             nodes = geo.dump_to_geojson(net, epsg=4326, branch=False)
             branches = geo.dump_to_geojson(net, epsg=4326, node=False)
-            print(geojson.dumps(branches))
+            # print(geojson.dumps(branches))
 
             self.dlg_import.BusLabel.setText("#Bus: " + str(len(net.bus)))
             self.dlg_import.LineLabel.setText("#Lines: " + str(len(net.line)))
