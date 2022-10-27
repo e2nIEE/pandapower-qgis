@@ -376,6 +376,9 @@ class ppqgis:
             import geojson
             net = pp.from_json(file)
 
+            # add voltage levels to all lines
+            pp.add_column_from_node_to_elements(net, 'vn_kv', True, 'line')
+
             # print(geojson.dumps(branches))
 
             self.dlg_import.BusLabel.setText("#Bus: " + str(len(net.bus)))
