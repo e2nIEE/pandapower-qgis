@@ -13,39 +13,63 @@ import math
 
 try:
     from pyproj import Transformer
+
     pyproj_INSTALLED = True
 except ImportError:
     pyproj_INSTALLED = False
 
 try:
     import geojson
+
     geojson_INSTALLED = True
 except ImportError:
     geojson_INSTALLED = False
 
 
-def dump_to_geojson(net, epsg_in=4326, epsg_out=4326, nodes=None, branches=None):
+def convert_crs(net, epsg_in, epsg_out):
+    if epsg_in != epsg_out:
+        if not pyproj_INSTALLED:
+            soft_dependency_error(str(sys._getframe().f_code.co_name) + "()", "pyproj")
+
+        transformer = Transformer.from_crs(epsg_in, epsg_out)
+
+    def geo_transformer(x):
+        d = transformer.transform(x[1], x[0])
+        return pd.Series([d[1], d[0], Point(d[1], d[0]), x[3]])
+
+    new = net.bus_geodata.apply(lambda x: geo_transformer(x), axis=1)
+    new.columns = ["x", "y", "geometry", "coords"]
+    net.bus_geodata = new
+
+    def geo_line_transformer(x):
+        ret = []
+        for y in x:
+            d = transformer.transform(y[1], y[0])
+            ret.append([d[1], d[0]])
+        # return pd.Series(ret, LineString(ret))
+        # return pd.Series(ret, x[1])
+        return ret
+
+    net.line_geodata.coords = net.line_geodata.coords.apply(lambda x: geo_line_transformer(x))
+    net.line_geodata.geometry = net.line_geodata.coords.apply(lambda x: LineString(x))
+
+
+def dump_to_geojson(net, nodes=None, branches=None):
     """
     Dumps all primitive values from bus, bus_geodata, res_bus, line, line_geodata and res_line into a geojson object.
     :param net: The pandapower network
     :type net: pandapowerNet
-    :param epsg: current epsg projection
-    :type epsg: int, default 4326 (= WGS84)
-    :param node: flag if return contains the bus data
-    :type node: bool, default True
-    :param branch: flag if return contains the line data
-    :type branch: bool, default True
+    :param net: pandapower network
+    :type net: pandapower network
+    :param nodes: list of buses to transform to geojson
+    :type nodes: set of int
+    :param branches: list of branches to transform to geojson
+    :type branches: set of int
     :return: geojson
     :return type: geojson.FeatureCollection
     """
     if not geojson_INSTALLED:
-        soft_dependency_error(str(sys._getframe().f_code.co_name)+"()", "geojson")
-
-    if epsg_in != epsg_out:
-        if not pyproj_INSTALLED:
-            soft_dependency_error(str(sys._getframe().f_code.co_name)+"()", "pyproj")
-
-        transformer = Transformer.from_crs(epsg_in, epsg_out)
+        soft_dependency_error(str(sys._getframe().f_code.co_name) + "()", "geojson")
 
     features = []
     # build geojson features for nodes
@@ -70,15 +94,6 @@ def dump_to_geojson(net, epsg_in=4326, epsg_out=4326, nodes=None, branches=None)
                 props[uid].update(prop)
         # props = net.bus.to_dict(orient='records')
 
-        if epsg_in != epsg_out:
-            def geo_transformer(x):
-                d = transformer.transform(x[1], x[0])
-                return pd.Series([d[1], d[0], Point(d[1], d[0]), x[3]])
-
-            new = net.bus_geodata.apply(lambda x: geo_transformer(x), axis=1)
-            new.columns = ["x", "y", "geometry", "coords"]
-            net.bus_geodata = new
-
         for uid, row in net.bus_geodata.loc[nodes].iterrows():
             if row.coords is not None:
                 # [(x, y), (x2, y2)] start and end of bus bar
@@ -91,19 +106,6 @@ def dump_to_geojson(net, epsg_in=4326, epsg_out=4326, nodes=None, branches=None)
 
     # build geojson features for branches
     if branches:
-        if epsg_in != epsg_out:
-            def geo_line_transformer(x):
-                ret = []
-                for y in x:
-                    d = transformer.transform(y[1], y[0])
-                    ret.append([d[1], d[0]])
-                # return pd.Series(ret, LineString(ret))
-                # return pd.Series(ret, x[1])
-                return ret
-
-            net.line_geodata.coords = net.line_geodata.coords.apply(lambda x: geo_line_transformer(x))
-            net.line_geodata.geometry = net.line_geodata.coords.apply(lambda x: LineString(x))
-
         props = {}
         for table in ['line', 'res_line']:
             cols = net[table].columns
