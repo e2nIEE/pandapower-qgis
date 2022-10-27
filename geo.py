@@ -57,12 +57,12 @@ def dump_to_geojson(net, epsg_in=4326, epsg_out=4326, node=True, branch=True):
             # as line and bus can have same ids.
             for uid, row in net[table].iterrows():
                 prop = {}
-                prop['index'] = uid
+                prop['pp_index'] = uid
                 for c in cols:
                     try:
                         prop[c] = float(row[c])
                         if math.isnan(prop[c]):
-                            prop[c] = 'nan'
+                            prop[c] = -1.
                     except (ValueError, TypeError):
                         prop[c] = str(row[c])
                 if uid not in props:
@@ -109,12 +109,12 @@ def dump_to_geojson(net, epsg_in=4326, epsg_out=4326, node=True, branch=True):
             cols = net[table].columns
             for uid, row in net[table].iterrows():
                 prop = {}
-                prop['index'] = uid
+                prop['pp_index'] = uid
                 for c in cols:
                     try:
                         prop[c] = float(row[c])
                         if math.isnan(prop[c]):
-                            prop[c] = 'nan'
+                            prop[c] = -1.
                     except (ValueError, TypeError):
                         prop[c] = str(row[c])
                 if uid not in props:
