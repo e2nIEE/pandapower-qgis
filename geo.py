@@ -24,7 +24,7 @@ except ImportError:
     geojson_INSTALLED = False
 
 
-def dump_to_geojson(net, epsg_in=4326, epsg_out=4326, node=True, branch=True):
+def dump_to_geojson(net, epsg_in=4326, epsg_out=4326, nodes=None, branches=None):
     """
     Dumps all primitive values from bus, bus_geodata, res_bus, line, line_geodata and res_line into a geojson object.
     :param net: The pandapower network
@@ -49,7 +49,7 @@ def dump_to_geojson(net, epsg_in=4326, epsg_out=4326, node=True, branch=True):
 
     features = []
     # build geojson features for nodes
-    if node:
+    if nodes:
         props = {}
         for table in ['bus', 'res_bus']:
             cols = net[table].columns
@@ -79,7 +79,7 @@ def dump_to_geojson(net, epsg_in=4326, epsg_out=4326, node=True, branch=True):
             new.columns = ["x", "y", "geometry", "coords"]
             net.bus_geodata = new
 
-        for uid, row in net.bus_geodata.iterrows():
+        for uid, row in net.bus_geodata.loc[nodes].iterrows():
             if row.coords is not None:
                 # [(x, y), (x2, y2)] start and end of bus bar
                 geom = geojson.LineString(row.coords)
@@ -90,7 +90,7 @@ def dump_to_geojson(net, epsg_in=4326, epsg_out=4326, node=True, branch=True):
             features.append(geojson.Feature(geometry=geom, id=uid, properties=props[uid]))
 
     # build geojson features for branches
-    if branch:
+    if branches:
         if epsg_in != epsg_out:
             def geo_line_transformer(x):
                 ret = []
@@ -122,7 +122,7 @@ def dump_to_geojson(net, epsg_in=4326, epsg_out=4326, node=True, branch=True):
                 props[uid].update(prop)
         # props = net.line.to_dict(orient='records')
 
-        for uid, row in net.line_geodata.iterrows():
+        for uid, row in net.line_geodata.loc[branches].iterrows():
             coords = row.coords
             geom = geojson.LineString(coords)
             features.append(geojson.Feature(geometry=geom, id=uid, properties=props[uid]))
