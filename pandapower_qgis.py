@@ -409,12 +409,13 @@ class ppqgis:
                     group = root.addGroup(layer_name)
 
                 voltage_levels = net.bus.vn_kv.unique()
+                geo.convert_crs(net, epsg_in=epsg, epsg_out=current_crs)
 
                 for vn_kv in voltage_levels:
                     buses, lines = filter_by_voltage(net, vn_kv)
 
-                    nodes = geo.dump_to_geojson(net, epsg_in=epsg, epsg_out=current_crs, nodes=buses)
-                    branches = geo.dump_to_geojson(net, epsg_in=epsg, epsg_out=current_crs, branches=lines)
+                    nodes = geo.dump_to_geojson(net, nodes=buses)
+                    branches = geo.dump_to_geojson(net, branches=lines)
 
                     # create bus and line layers
                     bus_layer = QgsVectorLayer(geojson.dumps(nodes), layer_name + "_" + str(vn_kv) + "_bus", "ogr")
