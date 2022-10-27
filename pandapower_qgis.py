@@ -47,6 +47,12 @@ import pathlib
 import os.path
 
 
+def filter_by_voltage(net, vn_kv, tol=10):
+    buses = set(net.bus.loc[abs(net.bus.vn_kv - vn_kv) <= tol].index)
+    lines = set(net.line.loc[net.line.from_bus.isin(buses) | net.line.to_bus.isin(buses)].index)
+    return buses, lines
+
+
 class ppqgis:
     """QGIS Plugin Implementation."""
 
@@ -378,7 +384,6 @@ class ppqgis:
 
             # add voltage levels to all lines
             pp.add_column_from_node_to_elements(net, 'vn_kv', True, 'line')
-
             # print(geojson.dumps(branches))
 
             self.dlg_import.BusLabel.setText("#Bus: " + str(len(net.bus)))
@@ -396,23 +401,30 @@ class ppqgis:
                 except ValueError:
                     epsg = 4326
 
-                nodes = geo.dump_to_geojson(net, epsg_in=epsg, epsg_out=current_crs, branch=False)
-                branches = geo.dump_to_geojson(net, epsg_in=epsg, epsg_out=current_crs, node=False)
-
                 root = QgsProject.instance().layerTreeRoot()
                 # check if group exists
                 group = root.findGroup(layer_name)
                 # create group if it does not exist
                 if not group:
                     group = root.addGroup(layer_name)
-                # create bus and line layers
-                bus_layer = QgsVectorLayer(geojson.dumps(nodes), layer_name + "_bus", "ogr")
-                line_layer = QgsVectorLayer(geojson.dumps(branches), layer_name + "_line", "ogr")
-                # add layers to group
-                QgsProject.instance().addMapLayer(bus_layer, False)
-                QgsProject.instance().addMapLayer(line_layer, False)
-                group.addLayer(bus_layer)
-                group.addLayer(line_layer)
+
+                voltage_levels = net.bus.vn_kv.unique()
+
+                for vn_kv in voltage_levels:
+                    buses, lines = filter_by_voltage(net, vn_kv)
+
+                    nodes = geo.dump_to_geojson(net, epsg_in=epsg, epsg_out=current_crs, nodes=buses)
+                    branches = geo.dump_to_geojson(net, epsg_in=epsg, epsg_out=current_crs, branches=lines)
+
+                    # create bus and line layers
+                    bus_layer = QgsVectorLayer(geojson.dumps(nodes), layer_name + "_" + str(vn_kv) + "_bus", "ogr")
+                    line_layer = QgsVectorLayer(geojson.dumps(branches), layer_name + "_" + str(vn_kv) + "_line", "ogr")
+                    # add layers to group
+                    QgsProject.instance().addMapLayer(bus_layer, False)
+                    QgsProject.instance().addMapLayer(line_layer, False)
+                    group.addLayer(bus_layer)
+                    group.addLayer(line_layer)
+
                 # Move layers above TileLayer
                 root.setHasCustomLayerOrder(True)
                 order = root.customLayerOrder()
