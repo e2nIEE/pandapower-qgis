@@ -28,11 +28,10 @@ import numpy
         this plugin requires geopandas, please make sure you have its dependencies (fiona) installed
         
 """
-from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication, QVariant
+from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog
-from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, QgsDistanceArea, QgsPointXY, QgsVectorLayer, \
-    QgsFields, QgsField
+from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, QgsDistanceArea, QgsPointXY, QgsVectorLayer
 
 # Initialize Qt resources from file resources.py
 from .resources import *
@@ -384,7 +383,6 @@ class ppqgis:
 
             # add voltage levels to all lines
             pp.add_column_from_node_to_elements(net, 'vn_kv', True, 'line')
-            # print(geojson.dumps(branches))
 
             self.dlg_import.BusLabel.setText("#Bus: " + str(len(net.bus)))
             self.dlg_import.LineLabel.setText("#Lines: " + str(len(net.line)))
@@ -409,7 +407,7 @@ class ppqgis:
                     group = root.addGroup(layer_name)
 
                 voltage_levels = net.bus.vn_kv.unique()
-                geo.convert_crs(net, epsg_in=epsg, epsg_out=current_crs)
+                geo.convert_crs(net, epsg_in=epsg, epsg_out=current_crs, switch=True)
 
                 for vn_kv in voltage_levels:
                     buses, lines = filter_by_voltage(net, vn_kv)
@@ -426,9 +424,10 @@ class ppqgis:
                     group.addLayer(bus_layer)
                     group.addLayer(line_layer)
 
-                # Move layers above TileLayer
-                root.setHasCustomLayerOrder(True)
-                order = root.customLayerOrder()
-                order.insert(0, order.pop())
-                order.insert(0, order.pop())
-                root.setCustomLayerOrder(order)
+                    # Move layers above TileLayer
+                    root.setHasCustomLayerOrder(True)
+                    order = root.customLayerOrder()
+                    order.insert(0, order.pop())
+                    order.insert(0, order.pop())
+                    root.setCustomLayerOrder(order)
+

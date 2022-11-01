@@ -3,4 +3,3 @@ geopandas
 numba
 pyproj
 geojson
-shapely
