@@ -28,6 +28,8 @@ import numpy
         this plugin requires geopandas, please make sure you have its dependencies (fiona) installed
         
 """
+# TODO: Write a try for geopandas import and error out without crashing
+
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog
@@ -44,6 +46,10 @@ import re
 import sys
 import pathlib
 import os.path
+
+# suppress a warning from the pyproj4 package
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 
 def filter_by_voltage(net, vn_kv, tol=10):
@@ -214,15 +220,18 @@ class ppqgis:
     def initGui(self):
         """Create the menu entries and toolbar icons inside the QGIS GUI."""
 
-        icon_path = ':/plugins/pandapower_qgis/icon.png'
+        icon_path = ':/plugins/pandapower_qgis/pp.svg'
+        import_icon_path = ':/plugins/pandapower_qgis/pp_import.svg'
+        export_icon_path = ':/plugins/pandapower_qgis/pp_export.svg'
+
         self.add_action(
-            icon_path,
+            icon_path=export_icon_path,
             text=self.tr(u'export to pandapower'),
             callback=self.exprt,
             parent=self.iface.mainWindow())
 
         self.add_action(
-            icon_path,
+            icon_path=import_icon_path,
             text=self.tr(u'import from pandapower'),
             callback=self.imprt,
             parent=self.iface.mainWindow())
