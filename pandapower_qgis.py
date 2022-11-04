@@ -22,6 +22,7 @@
  ***************************************************************************/
 """
 import numpy
+import pydevd_pycharm
 
 """
     For Windows Users:
@@ -395,18 +396,21 @@ class ppqgis:
 
             self.dlg_import.BusLabel.setText("#Bus: " + str(len(net.bus)))
             self.dlg_import.LineLabel.setText("#Lines: " + str(len(net.line)))
+            # attempt to set the layer name to the filename and set project crs as default
+            self.dlg_import.layerNameEdit.setText(os.path.basename(file).split('.')[0])
+            self.dlg_import.projectionSelect.setCrs(QgsProject.instance().crs())
             # show the dialog
             self.dlg_import.show()
             # Run the dialog event loop
             result = self.dlg_import.exec_()
             # See if OK was pressed
             if result:
-                layer_name = self.dlg_import.layerNameEdit.toPlainText()
-
+                layer_name = self.dlg_import.layerNameEdit.text()
                 try:
-                    epsg = int(self.dlg_import.epsgEdit.toPlainText())
+                    crs = int(self.dlg_import.projectionSelect.crs().authid().split(':')[1])
                 except ValueError:
-                    epsg = 4326
+                    crs = current_crs
+                switch = self.dlg_import.swapCoords.isChecked()
 
                 root = QgsProject.instance().layerTreeRoot()
                 # check if group exists
@@ -416,13 +420,21 @@ class ppqgis:
                     group = root.addGroup(layer_name)
 
                 voltage_levels = net.bus.vn_kv.unique()
-                geo.convert_crs(net, epsg_in=epsg, epsg_out=current_crs, switch=True)
+                geo.convert_crs(net, epsg_in=crs, epsg_out=current_crs, switch=switch)
+                crs = {
+                    "type": "name",
+                    "properties": {
+                        "name": f'EPSG:{current_crs}'
+                    }
+                }
 
                 for vn_kv in voltage_levels:
                     buses, lines = filter_by_voltage(net, vn_kv)
 
                     nodes = geo.dump_to_geojson(net, nodes=buses)
                     branches = geo.dump_to_geojson(net, branches=lines)
+                    nodes.update(crs=crs)
+                    branches.update(crs=crs)
 
                     # create bus and line layers
                     bus_layer = QgsVectorLayer(geojson.dumps(nodes), layer_name + "_" + str(vn_kv) + "_bus", "ogr")

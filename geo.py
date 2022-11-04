@@ -25,6 +25,7 @@ except ImportError:
 
 
 def convert_crs(net, epsg_in=4326, epsg_out=31467, switch=False):
+    # FIXME: There seems to be an issue in here somewhere when not converting between 31467 and 4326.
     """
     Converts bus and line geodata in net from epsg_in to epsg_out
     if GeoDataFrame data is present convert_geodata_to_gis should be used to update geometries after crs conversion
@@ -53,8 +54,7 @@ def convert_crs(net, epsg_in=4326, epsg_out=31467, switch=False):
             (y, x) = transformer.transform(r.x, r.y)
         coords = r.coords
         if coords and not pd.isna(coords):
-            iterator = transformer.itransform(coords, switch=switch)
-            coords = list(iterator)
+            coords = _geo_line_transformer(coords)
         return pd.Series([x, y, coords], ["x", "y", "coords"])
 
     def _geo_line_transformer(r):
