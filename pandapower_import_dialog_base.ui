@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>400</width>
-    <height>300</height>
+    <height>190</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -16,13 +16,13 @@
   <property name="locale">
    <locale language="English" country="Germany"/>
   </property>
-  <widget class="QWidget" name="">
+  <widget class="QWidget" name="layoutWidget">
    <property name="geometry">
     <rect>
      <x>20</x>
      <y>20</y>
      <width>361</width>
-     <height>261</height>
+     <height>151</height>
     </rect>
    </property>
    <layout class="QVBoxLayout" name="verticalLayout">
@@ -147,19 +147,6 @@
      </layout>
     </item>
     <item>
-     <widget class="QCheckBox" name="swapCoords">
-      <property name="enabled">
-       <bool>true</bool>
-      </property>
-      <property name="text">
-       <string>Swap X and Y Coordinates</string>
-      </property>
-      <property name="checked">
-       <bool>true</bool>
-      </property>
-     </widget>
-    </item>
-    <item>
      <spacer name="verticalSpacer">
       <property name="orientation">
        <enum>Qt::Vertical</enum>
@@ -198,7 +185,6 @@
  <tabstops>
   <tabstop>layerNameEdit</tabstop>
   <tabstop>projectionSelect</tabstop>
-  <tabstop>swapCoords</tabstop>
   <tabstop>button_box</tabstop>
  </tabstops>
  <resources/>

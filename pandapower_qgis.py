@@ -22,7 +22,6 @@
  ***************************************************************************/
 """
 import numpy
-import pydevd_pycharm
 
 """
     For Windows Users:
@@ -410,7 +409,6 @@ class ppqgis:
                     crs = int(self.dlg_import.projectionSelect.crs().authid().split(':')[1])
                 except ValueError:
                     crs = current_crs
-                switch = self.dlg_import.swapCoords.isChecked()
 
                 root = QgsProject.instance().layerTreeRoot()
                 # check if group exists
@@ -420,21 +418,13 @@ class ppqgis:
                     group = root.addGroup(layer_name)
 
                 voltage_levels = net.bus.vn_kv.unique()
-                geo.convert_crs(net, epsg_in=crs, epsg_out=current_crs, switch=switch)
-                crs = {
-                    "type": "name",
-                    "properties": {
-                        "name": f'EPSG:{current_crs}'
-                    }
-                }
+                geo.convert_crs(net, epsg_in=crs, epsg_out=current_crs)
 
                 for vn_kv in voltage_levels:
                     buses, lines = filter_by_voltage(net, vn_kv)
 
                     nodes = geo.dump_to_geojson(net, nodes=buses)
                     branches = geo.dump_to_geojson(net, branches=lines)
-                    nodes.update(crs=crs)
-                    branches.update(crs=crs)
 
                     # create bus and line layers
                     bus_layer = QgsVectorLayer(geojson.dumps(nodes), layer_name + "_" + str(vn_kv) + "_bus", "ogr")
