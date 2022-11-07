@@ -21,6 +21,7 @@
  *                                                                         *
  ***************************************************************************/
 """
+import numpy
 
 """
     For Windows Users:
@@ -49,6 +50,12 @@ import os.path
 # suppress a warning from the pyproj4 package
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
+
+
+def filter_by_voltage(net, vn_kv, tol=10):
+    buses = set(net.bus.loc[abs(net.bus.vn_kv - vn_kv) <= tol].index)
+    lines = set(net.line.loc[net.line.from_bus.isin(buses) | net.line.to_bus.isin(buses)].index)
+    return buses, lines
 
 
 class ppqgis:
@@ -360,7 +367,6 @@ class ppqgis:
 
     def imprt(self):
         """Run method that performs all the real work"""
-
         # Create the dialog with elements (after translation) and keep reference
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
         if self.first_start_import:
@@ -375,43 +381,64 @@ class ppqgis:
         filters = "pandapower networks (*.json)"
         selected = "pandapower networks (*.json)"
         file = QFileDialog.getOpenFileName(None, "File Dialog", self.dir, filters, selected)[0]
+        current_crs = int(QgsProject.instance().crs().authid().split(':')[1])
 
         if file:
             self.installer_func()
             import pandapower as pp
-            # import pandapower.networks as networks
-            import pandapower.plotting.geo as geo
+            import geo  # in a future version this should be replaced by pandapower.plotting.geo as geo
+            import geojson
             net = pp.from_json(file)
-            # net = networks.mv_oberrhein()
-            # pp.plotting.plotly.geo_data_to_latlong(net, "epsg:31467")  # convert to wgs84
-            geo.convert_geodata_to_gis(net)  # for valid geojson, net needs geo info in wgs84
+
+            # add voltage levels to all lines
+            pp.add_column_from_node_to_elements(net, 'vn_kv', True, 'line')
 
             self.dlg_import.BusLabel.setText("#Bus: " + str(len(net.bus)))
             self.dlg_import.LineLabel.setText("#Lines: " + str(len(net.line)))
+            # attempt to set the layer name to the filename and set project crs as default
+            self.dlg_import.layerNameEdit.setText(os.path.basename(file).split('.')[0])
+            self.dlg_import.projectionSelect.setCrs(QgsProject.instance().crs())
             # show the dialog
             self.dlg_import.show()
             # Run the dialog event loop
             result = self.dlg_import.exec_()
             # See if OK was pressed
             if result:
-                layer_name = self.dlg_import.layerNameEdit.toPlainText()
-                # Do something useful here - delete the line containing pass and
-                # substitute with your code.
+                layer_name = self.dlg_import.layerNameEdit.text()
+                try:
+                    crs = int(self.dlg_import.projectionSelect.crs().authid().split(':')[1])
+                except ValueError:
+                    crs = current_crs
+
                 root = QgsProject.instance().layerTreeRoot()
+                # check if group exists
                 group = root.findGroup(layer_name)
-                if group is None:
+                # create group if it does not exist
+                if not group:
                     group = root.addGroup(layer_name)
-                bus_geodata = net["bus_geodata"]
-                line_geodata = net["line_geodata"]
-                bus_layer = QgsVectorLayer(bus_geodata.to_json(na='drop'), layer_name + "_bus", "ogr")
-                line_layer = QgsVectorLayer(line_geodata.to_json(na='drop'), layer_name + "_line", "ogr")
-                QgsProject.instance().addMapLayer(bus_layer, False)
-                QgsProject.instance().addMapLayer(line_layer, False)
-                group.addLayer(bus_layer)
-                group.addLayer(line_layer)
-                # Move layers above TileLayer
-                root.setHasCustomLayerOrder(True)
-                order = root.customLayerOrder()
-                order.insert(0, order.pop())
-                order.insert(0, order.pop())
-                root.setCustomLayerOrder(order)
+
+                voltage_levels = net.bus.vn_kv.unique()
+                geo.convert_crs(net, epsg_in=crs, epsg_out=current_crs)
+
+                for vn_kv in voltage_levels:
+                    buses, lines = filter_by_voltage(net, vn_kv)
+
+                    nodes = geo.dump_to_geojson(net, nodes=buses)
+                    branches = geo.dump_to_geojson(net, branches=lines)
+
+                    # create bus and line layers
+                    bus_layer = QgsVectorLayer(geojson.dumps(nodes), layer_name + "_" + str(vn_kv) + "_bus", "ogr")
+                    line_layer = QgsVectorLayer(geojson.dumps(branches), layer_name + "_" + str(vn_kv) + "_line", "ogr")
+                    # add layers to group
+                    QgsProject.instance().addMapLayer(bus_layer, False)
+                    QgsProject.instance().addMapLayer(line_layer, False)
+                    group.addLayer(bus_layer)
+                    group.addLayer(line_layer)
+
+                    # Move layers above TileLayer
+                    root.setHasCustomLayerOrder(True)
+                    order = root.customLayerOrder()
+                    order.insert(0, order.pop())
+                    order.insert(0, order.pop())
+                    root.setCustomLayerOrder(order)
+

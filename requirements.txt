@@ -1,3 +1,5 @@
 pandapower==2.9.0
 geopandas
 numba
+pyproj
+geojson
