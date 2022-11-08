@@ -250,6 +250,21 @@ class ppqgis:
 
     def exprt(self):
         """Run method that performs all the real work"""
+        # TODO: compile information about the exported network:
+        """
+        used std_type's
+        amount bus
+        amount lines
+        amount lines containing errors
+        amount lines using derived length
+        """
+
+        # variables required for new network
+        # TODO: get these from export dialog
+        name = ''
+        f_hz = 50.0
+        sn_mva = 1e3
+        add_stdtypes = True
 
         # Create the dialog with elements (after translation) and keep reference
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
@@ -261,20 +276,6 @@ class ppqgis:
         layers = QgsProject.instance().mapLayers()
         current_crs = QgsProject.instance().crs().authid()
 
-        # clear both comboboxes
-        self.dlg_export.busComboBox.clear()
-        self.dlg_export.lineComboBox.clear()
-
-        # iterate through all layers and set up a reverse lookup table
-        self.layer_id_dict = {"-": None}
-        self.dlg_export.busComboBox.addItem("-")
-        self.dlg_export.lineComboBox.addItem("-")
-
-        for layer_id, layer in layers.items():
-            self.dlg_export.busComboBox.addItem(layer.name())
-            self.dlg_export.lineComboBox.addItem(layer.name())
-            self.layer_id_dict[layer.name()] = layer_id
-
         # show the dialog
         self.dlg_export.show()
         # Run the dialog event loop
@@ -285,83 +286,101 @@ class ppqgis:
 
             import pandapower as pp
 
-            net = pp.create_empty_network()
+            #filters = "pandapower networks (*.json)"
+            #selected = "pandapower networks (*.json)"
+            #file = QFileDialog.getSaveFileName(None, "File Dialog", self.dir, filters, selected)[0]
+            file = None # TODO: if not file: break
 
-            bus_layer_id = self.layer_id_dict[self.dlg_export.busComboBox.currentText()]
-            line_layer_id = self.layer_id_dict[self.dlg_export.lineComboBox.currentText()]
+            # create empty network
+            net = pp.create_empty_network(name, f_hz, sn_mva, add_stdtypes)
+
+            # this only allows for one line/bus layer
+            # TODO: don't ask for any information on layers as all info should be on the features in any layer
+            bus_layer = self.dlg_export.busComboBox.currentLayer()
+            line_layer = self.dlg_export.lineComboBox.currentLayer()
             vn_kv = float(self.dlg_export.vnKvTextEdit.toPlainText())
-            stdType = self.dlg_export.stdTypeTextEdit.toPlainText()
+            std_type = self.dlg_export.stdTypeTextEdit.toPlainText()
 
+            # create a bus_lookup table
             bus_lookup = dict()
 
-            if bus_layer_id:
-                layer = layers[bus_layer_id]
+            for layer_name in layers:
+                layer = layers[layer_name]
+                if not hasattr(layer, "getFeatures"):
+                    continue
                 features = layer.getFeatures()
                 for feature in features:
-                    geom = feature.geometry()
-                    geomSingleType = QgsWkbTypes.isSingleType(geom.wkbType())
-                    if geom.type() == QgsWkbTypes.GeometryType.PointGeometry:
-                        if geomSingleType:
-                            x = geom.asPoint()
-                            # QgsMessageLog.logMessage("Point: X: " + str(x.x()) + ", Y: " + str(x.y()),
-                            #                         level=Qgis.MessageLevel.Info)
-                            id = pp.create_bus(net, geodata=(x.x(), x.y()), vn_kv=vn_kv)
-                            bus_lookup[x] = id
+                    if not hasattr(feature, 'pp_type'):
+                        layer.select(feature.id())
+                    pp_type = feature['pp_type']
+                    if pp_type not in ['bus', 'line']:
+                        layer.select(feature.id())
+                    if pp_type == 'bus':
+                        geom = feature.geometry()
+                        geom_single_type = QgsWkbTypes.isSingleType(geom.wkbType())
+                        if geom.type() == QgsWkbTypes.GeometryType.PointGeometry:
+                            if geom_single_type:
+                                x = geom.asPoint()
+                                # QgsMessageLog.logMessage("Point: X: " + str(x.x()) + ", Y: " + str(x.y()),
+                                #                         level=Qgis.MessageLevel.Info)
+                                id = pp.create_bus(net, geodata=(x.x(), x.y()), vn_kv=vn_kv)
+                                bus_lookup[x] = id
+                    if pp_type == 'line':
+                        # TODO: verify all required properties are there and valid
+                        """
+                        Required properties:
+                            from_bus
+                            to_bus
+                            length_km (if not set derivable from geometry)
+                            std_type (if not a std_type in pp create it: net.create_std_type())
+                        """
+                        geom = feature.geometry()
+                        geom_single_type = QgsWkbTypes.isSingleType(geom.wkbType())
+                        if geom.type() == QgsWkbTypes.GeometryType.LineGeometry:
+                            if geom_single_type:
+                                x = geom.asPolyline()
+                                QgsMessageLog.logMessage("Line: " + str(x), level=Qgis.MessageLevel.Info)
+                            else:
+                                # x = geom.asMultiPolyline()
+                                # x = geom.asPolyline()
 
-            if line_layer_id:
-                layer = layers[line_layer_id]
-                features = layer.getFeatures()
-                for feature in features:
-                    geom = feature.geometry()
-                    geomSingleType = QgsWkbTypes.isSingleType(geom.wkbType())
-                    if geom.type() == QgsWkbTypes.GeometryType.LineGeometry:
-                        if geomSingleType:
-                            x = geom.asPolyline()
-                            QgsMessageLog.logMessage("Line: " + str(x), level=Qgis.MessageLevel.Info)
-                        else:
-                            # x = geom.asMultiPolyline()
-                            # x = geom.asPolyline()
+                                d = QgsDistanceArea()
+                                d.setEllipsoid(current_crs)
+                                for part in geom.parts():
+                                    # for point in part.points():
+                                    #     res += "[" + str(point.x()) + ", " + str(point.y()) + "]"
+                                    frst = part.points()[0]
+                                    last = part.points()[-1]
+                                    distance_first = sys.float_info.max
+                                    distance_last = sys.float_info.max
+                                    bus_found_first = -1
+                                    bus_found_last = -1
+                                    for bus in bus_lookup.keys():
+                                        m = d.measureLine([QgsPointXY(frst), bus])
+                                        if m < distance_first:
+                                            distance_first = m
+                                            bus_found_first = bus_lookup[bus]
 
-                            d = QgsDistanceArea()
-                            d.setEllipsoid(current_crs)
-                            for part in geom.parts():
-                                # for point in part.points():
-                                #     res += "[" + str(point.x()) + ", " + str(point.y()) + "]"
-                                frst = part.points()[0]
-                                last = part.points()[-1]
-                                distance_first = sys.float_info.max
-                                distance_last = sys.float_info.max
-                                bus_found_first = -1
-                                bus_found_last = -1
-                                for bus in bus_lookup.keys():
-                                    m = d.measureLine([QgsPointXY(frst), bus])
-                                    if m < distance_first:
-                                        distance_first = m
-                                        bus_found_first = bus_lookup[bus]
+                                        m = d.measureLine([QgsPointXY(last), bus])
 
-                                    m = d.measureLine([QgsPointXY(last), bus])
+                                        if m < distance_last:
+                                            distance_last = m
+                                            bus_found_last = bus_lookup[bus]
 
-                                    if m < distance_last:
-                                        distance_last = m
-                                        bus_found_last = bus_lookup[bus]
+                                    if bus_found_first != 1 and bus_found_last != 1:
+                                        # length = d.measureLine(QgsPointXY(part.points()))
+                                        geo = []
+                                        for point in part.points():
+                                            geo.append([point.x(), point.y()])
+                                        pp.create_line(net,
+                                                       from_bus=bus_found_first,
+                                                       to_bus=bus_found_last,
+                                                       std_type=std_type,
+                                                       length_km=part.length() / 1000.,
+                                                       geodata=geo)
+                                        # QgsMessageLog.logMessage("Line from {0} to {1}".format(bus_found_first, bus_found_last),
+                                        #                         level=Qgis.MessageLevel.Info)
 
-                                if bus_found_first != 1 and bus_found_last != 1:
-                                    # length = d.measureLine(QgsPointXY(part.points()))
-                                    geo = []
-                                    for point in part.points():
-                                        geo.append([point.x(), point.y()])
-                                    pp.create_line(net,
-                                                   from_bus=bus_found_first,
-                                                   to_bus=bus_found_last,
-                                                   std_type=stdType,
-                                                   length_km=part.length() / 1000.,
-                                                   geodata=geo)
-                                    # QgsMessageLog.logMessage("Line from {0} to {1}".format(bus_found_first, bus_found_last),
-                                    #                         level=Qgis.MessageLevel.Info)
-
-            filters = "pandapower networks (*.json)"
-            selected = "pandapower networks (*.json)"
-            file = QFileDialog.getSaveFileName(None, "File Dialog", self.dir, filters, selected)[0]
             if file:
                 pp.to_json(net, file)
 

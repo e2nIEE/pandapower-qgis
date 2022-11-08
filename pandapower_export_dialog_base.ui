@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>400</width>
-    <height>300</height>
+    <width>401</width>
+    <height>312</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -19,8 +19,8 @@
   <widget class="QDialogButtonBox" name="button_box">
    <property name="geometry">
     <rect>
-     <x>30</x>
-     <y>240</y>
+     <x>40</x>
+     <y>270</y>
      <width>341</width>
      <height>32</height>
     </rect>
@@ -43,26 +43,6 @@
    </property>
    <property name="text">
     <string>Layername:</string>
-   </property>
-  </widget>
-  <widget class="QComboBox" name="busComboBox">
-   <property name="geometry">
-    <rect>
-     <x>90</x>
-     <y>50</y>
-     <width>291</width>
-     <height>21</height>
-    </rect>
-   </property>
-  </widget>
-  <widget class="QComboBox" name="lineComboBox">
-   <property name="geometry">
-    <rect>
-     <x>90</x>
-     <y>160</y>
-     <width>291</width>
-     <height>21</height>
-    </rect>
    </property>
   </widget>
   <widget class="QLabel" name="label_2">
@@ -204,7 +184,34 @@
     <string>std_type:</string>
    </property>
   </widget>
+  <widget class="QgsMapLayerComboBox" name="lineComboBox">
+   <property name="geometry">
+    <rect>
+     <x>90</x>
+     <y>160</y>
+     <width>291</width>
+     <height>27</height>
+    </rect>
+   </property>
+  </widget>
+  <widget class="QgsMapLayerComboBox" name="busComboBox">
+   <property name="geometry">
+    <rect>
+     <x>90</x>
+     <y>50</y>
+     <width>291</width>
+     <height>27</height>
+    </rect>
+   </property>
+  </widget>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>QgsMapLayerComboBox</class>
+   <extends>QComboBox</extends>
+   <header>qgsmaplayercombobox.h</header>
+  </customwidget>
+ </customwidgets>
  <resources/>
  <connections>
   <connection>
