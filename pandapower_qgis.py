@@ -430,8 +430,8 @@ class ppqgis:
                     bus_layer_name = f'{layer_name}_{str(vn_kv)}_bus'
                     line_layer_name = f'{layer_name}_{str(vn_kv)}_line'
 
-                    bus_file_path = f'{folder_name}\\{layer_name}_{str(vn_kv)}_bus.geojson'
-                    line_file_path = f'{folder_name}\\{layer_name}_{str(vn_kv)}_line.geojson'
+                    bus_file_path = f'{folder_name}\\{bus_layer_name}.geojson'
+                    line_file_path = f'{folder_name}\\{line_layer_name}.geojson'
 
                     with open(bus_file_path, 'w') as file:
                         file.write(geojson.dumps(nodes))
@@ -439,8 +439,8 @@ class ppqgis:
                         file.write(geojson.dumps(branches))
 
                     # create bus and line layers
-                    bus_layer = QgsVectorLayer(bus_file_path, , "ogr")
-                    line_layer = QgsVectorLayer(line_file_path, layer_name + "_" + str(vn_kv) + "_line", "ogr")
+                    bus_layer = QgsVectorLayer(bus_file_path, bus_layer_name, "ogr")
+                    line_layer = QgsVectorLayer(line_file_path, line_layer_name, "ogr")
                     # add layers to group
                     QgsProject.instance().addMapLayer(bus_layer, False)
                     QgsProject.instance().addMapLayer(line_layer, False)
