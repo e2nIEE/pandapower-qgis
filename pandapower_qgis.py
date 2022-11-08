@@ -404,6 +404,7 @@ class ppqgis:
             result = self.dlg_import.exec_()
             # See if OK was pressed
             if result:
+                folder_name = self.dlg_import.folderSelect.filePath()
                 layer_name = self.dlg_import.layerNameEdit.text()
                 try:
                     crs = int(self.dlg_import.projectionSelect.crs().authid().split(':')[1])
@@ -426,9 +427,20 @@ class ppqgis:
                     nodes = geo.dump_to_geojson(net, nodes=buses)
                     branches = geo.dump_to_geojson(net, branches=lines)
 
+                    bus_layer_name = f'{layer_name}_{str(vn_kv)}_bus'
+                    line_layer_name = f'{layer_name}_{str(vn_kv)}_line'
+
+                    bus_file_path = f'{folder_name}\\{layer_name}_{str(vn_kv)}_bus.geojson'
+                    line_file_path = f'{folder_name}\\{layer_name}_{str(vn_kv)}_line.geojson'
+
+                    with open(bus_file_path, 'w') as file:
+                        file.write(geojson.dumps(nodes))
+                    with open(line_file_path, 'w') as file:
+                        file.write(geojson.dumps(branches))
+
                     # create bus and line layers
-                    bus_layer = QgsVectorLayer(geojson.dumps(nodes), layer_name + "_" + str(vn_kv) + "_bus", "ogr")
-                    line_layer = QgsVectorLayer(geojson.dumps(branches), layer_name + "_" + str(vn_kv) + "_line", "ogr")
+                    bus_layer = QgsVectorLayer(bus_file_path, , "ogr")
+                    line_layer = QgsVectorLayer(line_file_path, layer_name + "_" + str(vn_kv) + "_line", "ogr")
                     # add layers to group
                     QgsProject.instance().addMapLayer(bus_layer, False)
                     QgsProject.instance().addMapLayer(line_layer, False)
