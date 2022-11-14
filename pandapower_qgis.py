@@ -31,9 +31,11 @@ import numpy
 # TODO: Write a try for geopandas import and error out without crashing
 
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
-from qgis.PyQt.QtGui import QIcon
+from qgis.PyQt.QtGui import QIcon, QColor
 from qgis.PyQt.QtWidgets import QAction, QFileDialog, QListWidgetItem
-from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, QgsVectorLayer, NULL
+from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, QgsDistanceArea, QgsPointXY, QgsVectorLayer, \
+    QgsApplication, QgsGraduatedSymbolRenderer, QgsRendererRange, QgsClassificationRange, QgsMarkerSymbol, \
+    QgsLineSymbol, QgsGradientColorRamp, QgsSymbolLayerRegistry, NULL
 
 # Initialize Qt resources from file resources.py
 from .resources import *
@@ -54,6 +56,12 @@ from typing import List
 import warnings
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
+
+# constants for color ramps
+BUS_LOW_COLOR = "#ccff00"  # lime
+BUS_HIGH_COLOR = "#00cc44"  # green
+LINE_LOW_COLOR = "#0000ff"  # blue
+LINE_HIGH_COLOR = "#ff0022"  # red
 
 
 def filter_by_voltage(net, vn_kv, tol=10):
@@ -637,10 +645,16 @@ class ppqgis:
             # See if OK was pressed
             if result:
                 layer_name = self.dlg_import.layerNameEdit.text()
+                run_pandapower = self.dlg_import.runpp.isChecked()
+                render = self.dlg_import.gradRender.isChecked()
                 try:
                     crs = int(self.dlg_import.projectionSelect.crs().authid().split(':')[1])
                 except ValueError:
                     crs = current_crs
+
+                # run pandapower if selected
+                if run_pandapower:
+                    pp.runpp(net)
 
                 root = QgsProject.instance().layerTreeRoot()
                 # check if group exists
@@ -652,6 +666,60 @@ class ppqgis:
                 voltage_levels = net.bus.vn_kv.unique()
                 geo.convert_crs(net, epsg_in=crs, epsg_out=current_crs)
 
+                if render:
+                    # generate color ramp
+                    bus_color_ramp = QgsGradientColorRamp(QColor(BUS_LOW_COLOR), QColor(BUS_HIGH_COLOR))
+                    line_color_ramp = QgsGradientColorRamp(QColor(LINE_LOW_COLOR), QColor(LINE_HIGH_COLOR))
+
+                    classification_methode = QgsApplication.classificationMethodRegistry().method("EqualInterval")
+
+                    # generate symbology for bus layer
+                    bus_target = "max_bus_vm_pu"
+                    min_target = "min_vm_pu"
+                    max_target = "max_vm_pu"
+                    # map value from its possible min/max to 0/100
+                    classification_str = f'scale_linear("{bus_target}", 0.9, 1.1, 0, 100)'
+
+                    bus_grad_renderer = QgsGraduatedSymbolRenderer()
+                    bus_grad_renderer.setClassificationMethod(classification_methode)
+                    bus_grad_renderer.setClassAttribute(classification_str)
+                    # add categories (10 categories, 10% increments)
+                    for x in range(10):
+                        low_bound = x * 10
+                        high_bound = (x + 1) * 10 - .0001
+                        if x == 9:  # fix for not including 100%
+                            high_bound = 100
+                        bus_grad_renderer.addClassRange(
+                            QgsRendererRange(
+                                QgsClassificationRange(f'class {low_bound}-{high_bound}', low_bound, high_bound),
+                                QgsMarkerSymbol()
+                            )
+                        )
+                    bus_grad_renderer.updateColorRamp(bus_color_ramp)
+
+                    # generate symbology for line layer
+                    line_target = "loading_percent"
+
+                    line_grad_renderer = QgsGraduatedSymbolRenderer()
+                    line_grad_renderer.setClassificationMethod(classification_methode)
+                    line_grad_renderer.setClassAttribute(line_target)
+
+                    # add categories (10 categories, 10% increments)
+                    for x in range(10):
+                        low_bound = x * 10
+                        high_bound = (x + 1) * 10 - .0001
+                        if x == 9:  # fix for not including 100%
+                            high_bound = 100
+                        line_symbol = QgsLineSymbol()
+                        line_symbol.setWidth(.6)
+                        line_grad_renderer.addClassRange(
+                            QgsRendererRange(
+                                QgsClassificationRange(f'class {low_bound}-{high_bound}', low_bound, high_bound),
+                                line_symbol
+                            )
+                        )
+                    line_grad_renderer.updateColorRamp(line_color_ramp)
+
                 for vn_kv in voltage_levels:
                     buses, lines = filter_by_voltage(net, vn_kv)
 
@@ -660,7 +728,13 @@ class ppqgis:
 
                     # create bus and line layers
                     bus_layer = QgsVectorLayer(geojson.dumps(nodes), layer_name + "_" + str(vn_kv) + "_bus", "ogr")
+                    if render:
+                        bus_layer.setRenderer(bus_grad_renderer)
+
                     line_layer = QgsVectorLayer(geojson.dumps(branches), layer_name + "_" + str(vn_kv) + "_line", "ogr")
+                    if render:
+                        line_layer.setRenderer(line_grad_renderer)
+
                     # add layers to group
                     QgsProject.instance().addMapLayer(bus_layer, False)
                     QgsProject.instance().addMapLayer(line_layer, False)
@@ -673,3 +747,4 @@ class ppqgis:
                     order.insert(0, order.pop())
                     order.insert(0, order.pop())
                     root.setCustomLayerOrder(order)
+
