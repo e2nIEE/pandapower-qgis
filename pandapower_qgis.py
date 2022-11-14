@@ -263,6 +263,7 @@ class ppqgis:
             amount lines containing errors
             used std_type's
         """
+        initial_run=False
         # variables for summary:
         bus_count: int = 0
         line_count: int = 0
@@ -273,6 +274,7 @@ class ppqgis:
         # Create the dialog with elements (after translation) and keep reference
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
         if self.first_start_export:
+            initial_run=True
             self.first_start_export = False
             self.dlg_export = ppExportDialog()
             self.dlg_export_summary = ppExportSummaryDialog()
@@ -285,6 +287,8 @@ class ppqgis:
         layer_lookup = {}
 
         for layer in layers:
+            if not initial_run:
+                break
             name = layers[layer].name()
             # add layer item with checkbox to listWidget
             list_item = QListWidgetItem(self.dlg_export.layerSelectWidget)
@@ -336,8 +340,9 @@ class ppqgis:
                     selected_layers.append(layer_lookup[ind])
 
             # create a bus_lookup table
-            bus_lookup = dict()
+            bus_id_lookup = dict()
             for layer_name in selected_layers:
+                selectIds = list()
                 layer = layers[layer_name]
                 if not hasattr(layer, "getFeatures"):
                     continue
@@ -347,11 +352,11 @@ class ppqgis:
                 features = layer.getFeatures()
                 for feature in features:
                     if 'pp_type' not in field_names:
-                        layer.select(feature.id())
+                        selectIds.append(feature.id())
                         continue
                     pp_type = feature['pp_type']
                     if pp_type not in ['bus', 'line']:
-                        layer.select(feature.id())
+                        selectIds.append(feature.id())
                         continue
                     if pp_type == 'bus':
                         """
@@ -384,7 +389,7 @@ class ppqgis:
                         if 'vn_kv' in field_names and feature['vn_kv'] is not NULL:
                             props['vn_kv'] = feature['vn_kv']
                         else:  # not sure if this is the way to handle missing vn_kv
-                            layer.select(feature)
+                            selectIds.append(feature.id())
                             continue
 
                         geom = feature.geometry()
@@ -399,26 +404,41 @@ class ppqgis:
                             geometry = geom.asPolyline()
                             if len(geometry) > 2:
                                 # bus does not support full LineStrings only start and end points
-                                layer.select(feature.id())
+                                selectIds.append(feature.id())
                                 continue
                             props['coords'] = [(geometry[0].x(), geometry[0].y()), (geometry[1].x(), geometry[1].y())]
                         else:
-                            layer.select(feature.id())
+                            selectIds.append(feature.id())
                             continue
-                        bid = pp.create_bus(net,
-                                            name=props['name'],
-                                            index=props['pp_index'],
-                                            vn_kv=props['vn_kv'],
-                                            geodata=props['geodata'],
-                                            type=props['type'],
-                                            zone=props['zone'],
-                                            in_service=props['in_service'],
-                                            max_vm_pu=props['max_vm_pu'],
-                                            min_vm_pu=props['min_vm_pu'],
-                                            coords=props['coords'])
+                        try:
+                            bid = pp.create_bus(net,
+                                                name=props['name'],
+                                                index=props['pp_index'],
+                                                vn_kv=props['vn_kv'],
+                                                geodata=props['geodata'],
+                                                type=props['type'],
+                                                zone=props['zone'],
+                                                in_service=props['in_service'],
+                                                max_vm_pu=props['max_vm_pu'],
+                                                min_vm_pu=props['min_vm_pu'],
+                                                coords=props['coords'])
+                        except UserWarning:
+                            bid = pp.create_bus(net,
+                                                name=props['name'],
+                                                index=None,
+                                                vn_kv=props['vn_kv'],
+                                                geodata=props['geodata'],
+                                                type=props['type'],
+                                                zone=props['zone'],
+                                                in_service=props['in_service'],
+                                                max_vm_pu=props['max_vm_pu'],
+                                                min_vm_pu=props['min_vm_pu'],
+                                                coords=props['coords'])
                         bus_count += 1
-                        # TODO: add lookup support for pp_index from props
-                        bus_lookup[geometry] = bid
+                        if props['pp_index'] not in bus_id_lookup:
+                            bus_id_lookup[props['pp_index']] = bid
+                        else:
+                            print(f'pp_index "{props["pp_index"]}" double assigned!{feature.id()}')
 
                     if pp_type == 'line':
                         # TODO: verify all required properties valid
@@ -457,7 +477,7 @@ class ppqgis:
                         # Get optional properties if they exist
                         for key in required:
                             if key not in field_names or feature[key] == NULL:
-                                layer.select(feature.id())
+                                selectIds.append(feature.id())
                                 line_error_count += 1
                                 continue
                             assert key in field_names
@@ -498,28 +518,16 @@ class ppqgis:
                             # QgsMessageLog.logMessage("Line: " + str(x), level=Qgis.MessageLevel.Info)
 
                             # lookup from_bus/to_bus TODO: change this to pp_index lookup
-                            d = QgsDistanceArea()
-                            d.setEllipsoid(layer.crs().authid())
-                            frst = c[0]
-                            last = c[-1]
-                            distance_first = sys.float_info.max
-                            distance_last = sys.float_info.max
-                            bus_found_first = -1
-                            bus_found_last = -1
-                            for bus in bus_lookup.keys():
-                                m = d.measureLine([frst, bus])
-                                if m < distance_first:
-                                    distance_first = m
-                                    bus_found_first = bus_lookup[bus]
+                            from_bus = None
+                            to_bus = None
+                            if required['from_bus'] in bus_id_lookup:
+                                from_bus = bus_id_lookup[required['from_bus']]
+                            if required['to_bus'] in bus_id_lookup:
+                                to_bus = bus_id_lookup[required['to_bus']]
 
-                                m = d.measureLine([last, bus])
-                                if m < distance_last:
-                                    distance_last = m
-                                    bus_found_last = bus_lookup[bus]
-
-                            if bus_found_first == -1 and bus_found_last == -1:
-                                print(f'Could not find from_bus and to_bus for {feature.id()}')
-                                layer.select(feature.id())
+                            if not from_bus or not to_bus:
+                                print(f'Could not find from_bus {required["from_bus"]} or to_bus {required["to_bus"]} for {feature.id()}')
+                                selectIds.append(feature.id())
                                 line_error_count += 1
                                 continue
                             geo = []
@@ -528,8 +536,8 @@ class ppqgis:
                             if len(geo) > 0:
                                 optional['geodata'] = geo
                             pp.create_line(net,
-                                           from_bus=bus_found_first,
-                                           to_bus=bus_found_last,
+                                           from_bus=from_bus,
+                                           to_bus=to_bus,
                                            length_km=optional['length_km'],
                                            std_type=required['std_type'],
                                            name=optional['name'],
@@ -539,14 +547,18 @@ class ppqgis:
                                            df=optional['df'],
                                            parallel=optional['parallel'],
                                            max_loading_percent=optional['max_loading_percent'])
+
                             line_count += 1
                             if uses_derived_length:
                                 line_len_count += 1
                             # QgsMessageLog.logMessage("Line from {0} to {1}".format(bus_found_first, bus_found_last),
                             #                         level=Qgis.MessageLevel.Info)
 
+                    layer.selectByIds(selectIds, Qgis.SelectBehavior.AddToSelection)
+
             if file:
                 pp.to_json(net, file)
+
 
             # Display export summary:
             self.dlg_export_summary.exportedBus.setText(f'Buses exported: {bus_count}')
