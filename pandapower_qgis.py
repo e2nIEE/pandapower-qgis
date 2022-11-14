@@ -33,7 +33,7 @@ import numpy
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog, QListWidgetItem
-from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, QgsDistanceArea, QgsPointXY, QgsVectorLayer, NULL
+from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, QgsVectorLayer, NULL
 
 # Initialize Qt resources from file resources.py
 from .resources import *
@@ -438,10 +438,9 @@ class ppqgis:
                         if props['pp_index'] not in bus_id_lookup:
                             bus_id_lookup[props['pp_index']] = bid
                         else:
-                            print(f'pp_index "{props["pp_index"]}" double assigned!{feature.id()}')
+                            print(f'pp_index "{props["pp_index"]}" double assigned! FeatureID: {feature.id()}')
 
                     if pp_type == 'line':
-                        # TODO: verify all required properties valid
                         """
                         Required properties:
                             from_bus
@@ -457,7 +456,6 @@ class ppqgis:
                             parallel: int
                             max_loading_percent: float
                         """
-                        # TODO: check if std_type exists in network, if not create it with create_std_type()
                         required = {
                             "from_bus": None,
                             "to_bus": None,
@@ -517,7 +515,7 @@ class ppqgis:
                             c = geom.asPolyline()  # c = list[QgsPointXY]
                             # QgsMessageLog.logMessage("Line: " + str(x), level=Qgis.MessageLevel.Info)
 
-                            # lookup from_bus/to_bus TODO: change this to pp_index lookup
+                            # lookup from_bus/to_bus
                             from_bus = None
                             to_bus = None
                             if required['from_bus'] in bus_id_lookup:
