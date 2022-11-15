@@ -341,6 +341,7 @@ class ppqgis:
 
             # create a bus_lookup table
             bus_id_lookup = dict()
+            line_layers = list()
             for layer_name in selected_layers:
                 selectIds = list()
                 layer = layers[layer_name]
@@ -441,116 +442,135 @@ class ppqgis:
                             print(f'pp_index "{props["pp_index"]}" double assigned! FeatureID: {feature.id()}')
 
                     if pp_type == 'line':
-                        """
-                        Required properties:
-                            from_bus
-                            to_bus
-                            length_km (if not set derivable from geometry)
-                            std_type (if not a std_type in pp create it: net.create_std_type())
-                        Optional properties:
-                            name: str
-                            index: int
-                            geodata: [tuple]
-                            in_service: bool
-                            df: float (derating factor)
-                            parallel: int
-                            max_loading_percent: float
-                        """
-                        required = {
-                            "from_bus": None,
-                            "to_bus": None,
-                            "std_type": None,
+                        line_layers.append(layer_name)
+
+            for layer_name in line_layers:
+                selectIds = list()
+                layer = layers[layer_name]
+                if not hasattr(layer, "getFeatures"):
+                    continue
+                # get all fields of layer
+                field_names = layer.fields().names()
+
+                features = layer.getFeatures()
+                for feature in features:
+                    if 'pp_type' not in field_names:
+                        selectIds.append(feature.id())
+                        continue
+                    pp_type = feature['pp_type']
+                    if pp_type != 'line':
+                        selectIds.append(feature.id())
+                        continue
+                    """
+                    Required properties:
+                        from_bus
+                        to_bus
+                        length_km (if not set derivable from geometry)
+                        std_type (if not a std_type in pp create it: net.create_std_type())
+                    Optional properties:
+                        name: str
+                        index: int
+                        geodata: [tuple]
+                        in_service: bool
+                        df: float (derating factor)
+                        parallel: int
+                        max_loading_percent: float
+                    """
+                    required = {
+                        "from_bus": None,
+                        "to_bus": None,
+                        "std_type": None,
+                    }
+                    optional = {
+                        "length_km": None,  # is required, will be fetched from geometry, thus moved to optional
+                        "name": None,
+                        "pp_index": None,
+                        "geodata": None,
+                        "in_service": True,
+                        "df": 1.0,
+                        "parallel": 1,
+                        "max_loading_percent": float("NaN"),
+                    }
+                    uses_derived_length = False
+                    # Get optional properties if they exist
+                    for key in required:
+                        if key not in field_names or feature[key] == NULL:
+                            selectIds.append(feature.id())
+                            line_error_count += 1
+                            continue
+                        assert key in field_names
+                        assert feature[key] != NULL
+                        required[key] = feature[key]
+
+                    # check if std_type exists in pp
+                    if not pp.std_type_exists(net, required["std_type"]):
+                        # TODO: fill std_type data somehow
+                        #  This data object is only an example and needs replacing!
+                        data = {
+                            "r_ohm_per_km": 0.2,
+                            "x_ohm_per_km": 0.07,
+                            "c_nf_per_km": 1160.0,
+                            "max_i_ka": 0.4,
+                            "endtemp_degree": 70.0,
+                            "r0_ohm_per_km": 0.8,
+                            "x0_ohm_per_km": 0.3,
+                            "c0_nf_per_km":  500.0
                         }
-                        optional = {
-                            "length_km": None,  # is required, will be fetched from geometry, thus moved to optional
-                            "name": None,
-                            "pp_index": None,
-                            "geodata": None,
-                            "in_service": True,
-                            "df": 1.0,
-                            "parallel": 1,
-                            "max_loading_percent": float("NaN"),
-                        }
-                        uses_derived_length = False
-                        # Get optional properties if they exist
-                        for key in required:
-                            if key not in field_names or feature[key] == NULL:
-                                selectIds.append(feature.id())
-                                line_error_count += 1
-                                continue
-                            assert key in field_names
-                            assert feature[key] != NULL
-                            required[key] = feature[key]
+                        pp.create_std_type(net, data=data, name=required['std_type'])
+                    # track exported std types
+                    if required['std_type'] not in exported_std_types:
+                        exported_std_types.append(required['std_type'])
 
-                        # check if std_type exists in pp
-                        if not pp.std_type_exists(net, required["std_type"]):
-                            # TODO: fill std_type data somehow
-                            #  This data object is only an example and needs replacing!
-                            data = {
-                                "r_ohm_per_km": 0.2,
-                                "x_ohm_per_km": 0.07,
-                                "c_nf_per_km": 1160.0,
-                                "max_i_ka": 0.4,
-                                "endtemp_degree": 70.0,
-                                "r0_ohm_per_km": 0.8,
-                                "x0_ohm_per_km": 0.3,
-                                "c0_nf_per_km":  500.0
-                            }
-                            pp.create_std_type(net, data=data, name=required['std_type'])
-                        # track exported std types
-                        if required['std_type'] not in exported_std_types:
-                            exported_std_types.append(required['std_type'])
+                    for key in optional:
+                        if key in field_names and feature[key] != NULL:
+                            optional[key] = feature[key]
+                        # assert optional[key] != NULL  # This assertion fails for None
+                    geom = feature.geometry()
+                    # set length_km if it hadn't been provided
+                    if optional['length_km'] is None:
+                        optional['length_km'] = geom.length()
+                        uses_derived_length = True
+                    if geom.type() == QgsWkbTypes.GeometryType.LineGeometry:
+                        assert QgsWkbTypes.isSingleType(geom.wkbType())
+                        c = geom.asPolyline()  # c = list[QgsPointXY]
+                        # QgsMessageLog.logMessage("Line: " + str(x), level=Qgis.MessageLevel.Info)
 
-                        for key in optional:
-                            if key in field_names and feature[key] != NULL:
-                                optional[key] = feature[key]
-                            # assert optional[key] != NULL  # This assertion fails for None
-                        geom = feature.geometry()
-                        # set length_km if it hadn't been provided
-                        if optional['length_km'] is None:
-                            optional['length_km'] = geom.length()
-                            uses_derived_length = True
-                        if geom.type() == QgsWkbTypes.GeometryType.LineGeometry:
-                            assert QgsWkbTypes.isSingleType(geom.wkbType())
-                            c = geom.asPolyline()  # c = list[QgsPointXY]
-                            # QgsMessageLog.logMessage("Line: " + str(x), level=Qgis.MessageLevel.Info)
+                        # lookup from_bus/to_bus
+                        from_bus = None
+                        to_bus = None
+                        if required['from_bus'] in bus_id_lookup:
+                            from_bus = bus_id_lookup[required['from_bus']]
+                        if required['to_bus'] in bus_id_lookup:
+                            to_bus = bus_id_lookup[required['to_bus']]
 
-                            # lookup from_bus/to_bus
-                            from_bus = None
-                            to_bus = None
-                            if required['from_bus'] in bus_id_lookup:
-                                from_bus = bus_id_lookup[required['from_bus']]
-                            if required['to_bus'] in bus_id_lookup:
-                                to_bus = bus_id_lookup[required['to_bus']]
+                        if not from_bus or not to_bus:
+                            print(f'Could not find from_bus {required["from_bus"]} or to_bus {required["to_bus"]} for {feature.id()}')
+                            selectIds.append(feature.id())
+                            line_error_count += 1
+                            continue
+                        geo = []
+                        for point in c:
+                            geo.append((point.x(), point.y()))
+                        if len(geo) > 0:
+                            optional['geodata'] = geo
+                        pp.create_line(net,
+                                       from_bus=from_bus,
+                                       to_bus=to_bus,
+                                       length_km=optional['length_km'],
+                                       std_type=required['std_type'],
+                                       name=optional['name'],
+                                       index=optional['pp_index'],
+                                       geodata=optional['geodata'],
+                                       in_service=optional['in_service'],
+                                       df=optional['df'],
+                                       parallel=optional['parallel'],
+                                       max_loading_percent=optional['max_loading_percent'])
 
-                            if not from_bus or not to_bus:
-                                print(f'Could not find from_bus {required["from_bus"]} or to_bus {required["to_bus"]} for {feature.id()}')
-                                selectIds.append(feature.id())
-                                line_error_count += 1
-                                continue
-                            geo = []
-                            for point in c:
-                                geo.append((point.x(), point.y()))
-                            if len(geo) > 0:
-                                optional['geodata'] = geo
-                            pp.create_line(net,
-                                           from_bus=from_bus,
-                                           to_bus=to_bus,
-                                           length_km=optional['length_km'],
-                                           std_type=required['std_type'],
-                                           name=optional['name'],
-                                           index=optional['pp_index'],
-                                           geodata=optional['geodata'],
-                                           in_service=optional['in_service'],
-                                           df=optional['df'],
-                                           parallel=optional['parallel'],
-                                           max_loading_percent=optional['max_loading_percent'])
-
-                            line_count += 1
-                            if uses_derived_length:
-                                line_len_count += 1
-                            # QgsMessageLog.logMessage("Line from {0} to {1}".format(bus_found_first, bus_found_last),
-                            #                         level=Qgis.MessageLevel.Info)
+                        line_count += 1
+                        if uses_derived_length:
+                            line_len_count += 1
+                        # QgsMessageLog.logMessage("Line from {0} to {1}".format(bus_found_first, bus_found_last),
+                        #                         level=Qgis.MessageLevel.Info)
 
                     layer.selectByIds(selectIds, Qgis.SelectBehavior.AddToSelection)
 
