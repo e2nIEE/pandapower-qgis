@@ -33,7 +33,24 @@ import numpy
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog
-from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, QgsDistanceArea, QgsPointXY, QgsVectorLayer
+from qgis.core import (
+    QgsProject,
+    QgsWkbTypes,
+    QgsMessageLog,
+    Qgis,
+    QgsFields,
+    QgsFeature,
+    QgsFeatureSink,
+    QgsFeatureRequest,
+    QgsFeatureIterator,
+    QgsDistanceArea,
+    QgsPointXY,
+    QgsVectorLayer,
+    QgsVectorDataProvider,
+    QgsDataProvider,
+    QgsAbstractFeatureSource,
+    QgsRectangle
+)
 
 # Initialize Qt resources from file resources.py
 from .resources import *
@@ -46,6 +63,7 @@ import re
 import sys
 import pathlib
 import os.path
+from typing import Any, Dict, Iterable, List, Tuple, Union, Set
 
 # suppress a warning from the pyproj4 package
 import warnings
@@ -454,3 +472,143 @@ class ppqgis:
                     order.insert(0, order.pop())
                     root.setCustomLayerOrder(order)
 
+
+class pandapowerProvider(QgsVectorDataProvider):
+    @classmethod
+    def providerKey(cls):
+        """Returns the memory provider key"""
+        return 'pandapowerprovider'
+
+    @classmethod
+    def createProvider(cls, uri, providerOptions, flags=QgsDataProvider.ReadFlags()):
+        return pandapowerProvider(uri, providerOptions, flags)
+
+    # Implementation of functions from QgsVectorDataProvider
+
+    def __init__(self, uri='', providerOptions=QgsDataProvider.ProviderOptions(), flags=QgsDataProvider.ReadFlags()):
+        super().__init__(uri)
+        # Use the memory layer to parse the uri
+        mlayer = QgsVectorLayer(uri, 'ml', 'memory')
+        self._uri = uri
+        self._fields = mlayer.fields()
+        self._wkbType = mlayer.wkbType()
+        self._features = {}
+        self._extent = QgsRectangle()
+        self._extent.setMinimal()
+        self._subset_string = ''
+        self._crs = mlayer.crs()
+        self._spatialindex = None
+        self._provider_options = providerOptions
+        self._flags = flags
+        if 'index=yes' in self._uri:
+            self.createSpatialIndex()
+
+    def featureSource(self) -> QgsAbstractFeatureSource:
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def dataSourceUri(self, expandAuthConfig: bool = ...) -> str:
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def storageType(self) -> str:
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def getFeatures(self, request: QgsFeatureRequest = ...) -> QgsFeatureIterator:
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def uniqueValues(self, fieldIndex: int, limit: int = ...) -> Set[Any]:
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def wkbType(self) -> QgsWkbTypes.Type:
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def featureCount(self) -> int:
+        # sTODO: Implement this
+        raise NotImplementedError
+
+    def fields(self) -> QgsFields:
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def addFeatures(self, flist: Iterable[QgsFeature], flags: Union[QgsFeatureSink.Flags, QgsFeatureSink.Flag] = ...) \
+            -> Tuple[bool, List[QgsFeature]]:
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def deleteFeatures(self, id: Any) -> bool:
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def addAttributes(self, attributes: Any) -> bool:
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def renameAttributes(self, renamedAttributes: Dict[int, str]) -> bool:
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def deleteAttributes(self, attributes: Any) -> bool:
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def changeAttributeValues(self, attr_map: Any) -> bool:
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def changeGeometryValues(self, geometry_map: Any) -> bool:
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def allFeatureIds(self) -> Any:
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def subsetString(self) -> str:
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def setSubsetString(self, subset: str, updateFeatureCount: bool = ...) -> bool:
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def supportsSubsetString(self) -> bool:
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def createSpatialIndex(self) -> bool:
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def capabilities(self) -> 'QgsVectorDataProvider.Capabilities':
+        # TODO: Implement this
+        raise NotImplementedError
+
+    # Implementation of functions from QgsDataProvider
+
+    def name(self):
+        return self.providerKey()
+
+    def extent(self):
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def updateExtents(self) -> None:
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def isValid(self) -> bool:
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def crs(self):
+        # TODO: Implement this
+        raise NotImplementedError
+
+    def handlePostCloneOperations(self, source: 'QgsVectorDataProvider') -> None:
+        # TODO: Implement this
+        raise NotImplementedError
