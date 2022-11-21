@@ -542,7 +542,7 @@ class ppqgis:
                         if required['to_bus'] in bus_id_lookup:
                             to_bus = bus_id_lookup[required['to_bus']]
 
-                        if not from_bus or not to_bus:
+                        if from_bus is None or to_bus is None:
                             print(f'Could not find from_bus {required["from_bus"]} or to_bus {required["to_bus"]} for {feature.id()}')
                             selectIds.append(feature.id())
                             line_error_count += 1
