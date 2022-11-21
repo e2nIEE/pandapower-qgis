@@ -288,7 +288,7 @@ class ppqgis:
 
         for layer in layers:
             if not initial_run:
-                break
+                self.dlg_export.layerSelectWidget.clear()
             name = layers[layer].name()
             # add layer item with checkbox to listWidget
             list_item = QListWidgetItem(self.dlg_export.layerSelectWidget)
@@ -441,9 +441,8 @@ class ppqgis:
                         else:
                             print(f'pp_index "{props["pp_index"]}" double assigned! FeatureID: {feature.id()}')
 
-                    if pp_type == 'line':
+                    if pp_type == 'line' and layer_name not in line_layers:
                         line_layers.append(layer_name)
-
             for layer_name in line_layers:
                 selectIds = list()
                 layer = layers[layer_name]
@@ -591,8 +590,7 @@ class ppqgis:
             if file:
                 pp.to_json(net, file)
 
-
-            # Display export summary:
+            # Display export summary
             self.dlg_export_summary.exportedBus.setText(f'Buses exported: {bus_count}')
             self.dlg_export_summary.exportedLines.setText(f'Lines exported: {line_count} ({line_len_count})')
             self.dlg_export_summary.erroredLines.setText(f'Lines containing errors: {line_error_count}')
