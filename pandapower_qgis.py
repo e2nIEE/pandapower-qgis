@@ -46,10 +46,10 @@ from qgis.core import (
     QgsDistanceArea,
     QgsPointXY,
     QgsVectorLayer,
-    QgsVectorDataProvider,
     QgsDataProvider,
+    QgsVectorDataProvider,
     QgsAbstractFeatureSource,
-    QgsRectangle
+    QgsAbstractFeatureIterator,
 )
 
 # Initialize Qt resources from file resources.py
@@ -473,7 +473,44 @@ class ppqgis:
                     root.setCustomLayerOrder(order)
 
 
-class pandapowerProvider(QgsVectorDataProvider):
+# TODO: change this to provider the pandapower Network
+""" Implementation of a QGis Memory Provider:"""
+
+class PandapowerFeatureSource(QgsAbstractFeatureSource):
+    def __init__(self):
+        super().__init__(self)
+        # TODO: implement this
+        raise NotImplementedError
+
+    def getFeatures(self, request: QgsFeatureRequest = QgsFeatureRequest()) -> QgsFeatureIterator:
+        # TODO: implement this
+        raise NotImplementedError
+
+    def iteratorClosed(self, it: QgsAbstractFeatureIterator) -> None:
+        # TODO: implement this
+        raise NotImplementedError
+
+    def iteratorOpened(self, it: QgsAbstractFeatureIterator) -> None:
+        # TODO: implement this
+        raise NotImplementedError
+
+
+
+
+class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
+
+    def __init__(self, request: QgsFeatureRequest) -> None:
+        super().__init__(self, request)
+        # TODO: implement this
+        raise NotImplementedError
+
+
+    def fetchFeature(self, f: QgsFeature) -> bool:
+        # TODO: implement this
+        raise NotImplementedError
+
+
+class PandapowerProvider(QgsVectorDataProvider):
     @classmethod
     def providerKey(cls):
         """Returns the memory provider key"""
@@ -481,39 +518,26 @@ class pandapowerProvider(QgsVectorDataProvider):
 
     @classmethod
     def createProvider(cls, uri, providerOptions, flags=QgsDataProvider.ReadFlags()):
-        return pandapowerProvider(uri, providerOptions, flags)
+        return PandapowerProvider(uri, providerOptions, flags)
 
     # Implementation of functions from QgsVectorDataProvider
 
     def __init__(self, uri='', providerOptions=QgsDataProvider.ProviderOptions(), flags=QgsDataProvider.ReadFlags()):
         super().__init__(uri)
-        # Use the memory layer to parse the uri
-        mlayer = QgsVectorLayer(uri, 'ml', 'memory')
         self._uri = uri
-        self._fields = mlayer.fields()
-        self._wkbType = mlayer.wkbType()
-        self._features = {}
-        self._extent = QgsRectangle()
-        self._extent.setMinimal()
         self._subset_string = ''
-        self._crs = mlayer.crs()
-        self._spatialindex = None
         self._provider_options = providerOptions
         self._flags = flags
-        if 'index=yes' in self._uri:
-            self.createSpatialIndex()
 
     def featureSource(self) -> QgsAbstractFeatureSource:
         # TODO: Implement this
         raise NotImplementedError
 
-    def dataSourceUri(self, expandAuthConfig: bool = ...) -> str:
-        # TODO: Implement this
-        raise NotImplementedError
+    def dataSourceUri(self, expandAuthConfig: bool = True) -> str:
+        return self._uri
 
     def storageType(self) -> str:
-        # TODO: Implement this
-        raise NotImplementedError
+        return "pandapower memory storage"
 
     def getFeatures(self, request: QgsFeatureRequest = ...) -> QgsFeatureIterator:
         # TODO: Implement this
@@ -540,7 +564,7 @@ class pandapowerProvider(QgsVectorDataProvider):
         # TODO: Implement this
         raise NotImplementedError
 
-    def deleteFeatures(self, id: Any) -> bool:
+    def deleteFeatures(self, ids: Any) -> bool:
         # TODO: Implement this
         raise NotImplementedError
 
@@ -572,7 +596,7 @@ class pandapowerProvider(QgsVectorDataProvider):
         # TODO: Implement this
         raise NotImplementedError
 
-    def setSubsetString(self, subset: str, updateFeatureCount: bool = ...) -> bool:
+    def setSubsetString(self, subsetString: str, updateFeatureCount: bool = ...) -> bool:
         # TODO: Implement this
         raise NotImplementedError
 
@@ -584,7 +608,7 @@ class pandapowerProvider(QgsVectorDataProvider):
         # TODO: Implement this
         raise NotImplementedError
 
-    def capabilities(self) -> 'QgsVectorDataProvider.Capabilities':
+    def capabilities(self) -> QgsVectorDataProvider.Capabilities:
         # TODO: Implement this
         raise NotImplementedError
 
@@ -609,6 +633,6 @@ class pandapowerProvider(QgsVectorDataProvider):
         # TODO: Implement this
         raise NotImplementedError
 
-    def handlePostCloneOperations(self, source: 'QgsVectorDataProvider') -> None:
+    def handlePostCloneOperations(self, source: QgsVectorDataProvider) -> None:
         # TODO: Implement this
         raise NotImplementedError
