@@ -553,18 +553,32 @@ class ppqgis:
                             geo.append((point.x(), point.y()))
                         if len(geo) > 0:
                             optional['geodata'] = geo
-                        pp.create_line(net,
-                                       from_bus=from_bus,
-                                       to_bus=to_bus,
-                                       length_km=optional['length_km'],
-                                       std_type=required['std_type'],
-                                       name=optional['name'],
-                                       index=optional['pp_index'],
-                                       geodata=optional['geodata'],
-                                       in_service=optional['in_service'],
-                                       df=optional['df'],
-                                       parallel=optional['parallel'],
-                                       max_loading_percent=optional['max_loading_percent'])
+                        try:
+                            pp.create_line(net,
+                                           from_bus=from_bus,
+                                           to_bus=to_bus,
+                                           length_km=optional['length_km'],
+                                           std_type=required['std_type'],
+                                           name=optional['name'],
+                                           index=optional['pp_index'],
+                                           geodata=optional['geodata'],
+                                           in_service=optional['in_service'],
+                                           df=optional['df'],
+                                           parallel=optional['parallel'],
+                                           max_loading_percent=optional['max_loading_percent'])
+                        except UserWarning:
+                            pp.create_line(net,
+                                           from_bus=from_bus,
+                                           to_bus=to_bus,
+                                           length_km=optional['length_km'],
+                                           std_type=required['std_type'],
+                                           name=optional['name'],
+                                           index=None,
+                                           geodata=optional['geodata'],
+                                           in_service=optional['in_service'],
+                                           df=optional['df'],
+                                           parallel=optional['parallel'],
+                                           max_loading_percent=optional['max_loading_percent'])
 
                         line_count += 1
                         if uses_derived_length:
