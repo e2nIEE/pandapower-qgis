@@ -11,7 +11,7 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>Import from PandaPower</string>
+   <string>Import pandapower network</string>
   </property>
   <property name="locale">
    <locale language="English" country="Germany"/>
