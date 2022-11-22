@@ -11,7 +11,7 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>Import from PandaPower</string>
+   <string>Import pandapower network</string>
   </property>
   <property name="locale">
    <locale language="English" country="Germany"/>
@@ -132,6 +132,27 @@
        </property>
        <property name="acceptDrops">
         <bool>false</bool>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
+    <layout class="QHBoxLayout" name="checkboxes">
+     <item>
+      <widget class="QCheckBox" name="runpp">
+       <property name="text">
+        <string>Run PandaPower</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="gradRender">
+       <property name="text">
+        <string>color lines by load</string>
+       </property>
+       <property name="checked">
+        <bool>true</bool>
        </property>
       </widget>
      </item>

@@ -31,9 +31,11 @@ import numpy
 # TODO: Write a try for geopandas import and error out without crashing
 
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
-from qgis.PyQt.QtGui import QIcon
+from qgis.PyQt.QtGui import QIcon, QColor
 from qgis.PyQt.QtWidgets import QAction, QFileDialog, QListWidgetItem
-from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, QgsVectorLayer, NULL
+from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, QgsDistanceArea, QgsPointXY, QgsVectorLayer, \
+    QgsApplication, QgsGraduatedSymbolRenderer, QgsSingleSymbolRenderer, QgsRendererRange, QgsClassificationRange, \
+    QgsMarkerSymbol, QgsLineSymbol, QgsGradientColorRamp, QgsSymbolLayerRegistry, NULL
 
 # Initialize Qt resources from file resources.py
 from .resources import *
@@ -54,6 +56,12 @@ from typing import List
 import warnings
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
+
+# constants for color ramps
+BUS_LOW_COLOR = "#ccff00"  # lime
+BUS_HIGH_COLOR = "#00cc44"  # green
+LINE_LOW_COLOR = "#0000ff"  # blue
+LINE_HIGH_COLOR = "#ff0022"  # red
 
 
 def filter_by_voltage(net, vn_kv, tol=10):
@@ -263,7 +271,7 @@ class ppqgis:
             amount lines containing errors
             used std_type's
         """
-        initial_run=False
+        initial_run = False
         # variables for summary:
         bus_count: int = 0
         line_count: int = 0
@@ -274,7 +282,7 @@ class ppqgis:
         # Create the dialog with elements (after translation) and keep reference
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
         if self.first_start_export:
-            initial_run=True
+            initial_run = True
             self.first_start_export = False
             self.dlg_export = ppExportDialog()
             self.dlg_export_summary = ppExportSummaryDialog()
@@ -513,7 +521,7 @@ class ppqgis:
                             "endtemp_degree": 70.0,
                             "r0_ohm_per_km": 0.8,
                             "x0_ohm_per_km": 0.3,
-                            "c0_nf_per_km":  500.0
+                            "c0_nf_per_km": 500.0
                         }
                         pp.create_std_type(net, data=data, name=required['std_type'])
                     # track exported std types
@@ -543,7 +551,8 @@ class ppqgis:
                             to_bus = bus_id_lookup[required['to_bus']]
 
                         if from_bus is None or to_bus is None:
-                            print(f'Could not find from_bus {required["from_bus"]} or to_bus {required["to_bus"]} for {feature.id()}')
+                            print(
+                                f'Could not find from_bus {required["from_bus"]} or to_bus {required["to_bus"]} for {feature.id()}')
                             selectIds.append(feature.id())
                             line_error_count += 1
                             continue
@@ -637,10 +646,16 @@ class ppqgis:
             # See if OK was pressed
             if result:
                 layer_name = self.dlg_import.layerNameEdit.text()
+                run_pandapower = self.dlg_import.runpp.isChecked()
+                render = self.dlg_import.gradRender.isChecked()
                 try:
                     crs = int(self.dlg_import.projectionSelect.crs().authid().split(':')[1])
                 except ValueError:
                     crs = current_crs
+
+                # run pandapower if selected
+                if run_pandapower:
+                    pp.runpp(net)
 
                 root = QgsProject.instance().layerTreeRoot()
                 # check if group exists
@@ -652,24 +667,104 @@ class ppqgis:
                 voltage_levels = net.bus.vn_kv.unique()
                 geo.convert_crs(net, epsg_in=crs, epsg_out=current_crs)
 
+                # generate color ramp
+                bus_color_ramp = QgsGradientColorRamp(QColor(BUS_LOW_COLOR), QColor(BUS_HIGH_COLOR))
+                line_color_ramp = QgsGradientColorRamp(QColor(LINE_LOW_COLOR), QColor(LINE_HIGH_COLOR))
+
+                # Color lines by load/ buses by voltage
+                if render:
+                    classification_methode = QgsApplication.classificationMethodRegistry().method("EqualInterval")
+
+                    # generate symbology for bus layer
+                    bus_target = "vm_pu"
+                    min_target = "min_vm_pu"
+                    max_target = "max_vm_pu"
+                    # map value from its possible min/max to 0/100
+                    classification_str = f'scale_linear("{bus_target}", 0.9, 1.1, 0, 100)'
+
+                    bus_renderer = QgsGraduatedSymbolRenderer()
+                    bus_renderer.setClassificationMethod(classification_methode)
+                    bus_renderer.setClassAttribute(classification_str)
+                    # add categories (10 categories, 10% increments)
+                    for x in range(10):
+                        low_bound = x * 10
+                        high_bound = (x + 1) * 10 - .0001
+                        if x == 9:  # fix for not including 100%
+                            high_bound = 100
+                        bus_renderer.addClassRange(
+                            QgsRendererRange(
+                                QgsClassificationRange(f'class {low_bound}-{high_bound}', low_bound, high_bound),
+                                QgsMarkerSymbol()
+                            )
+                        )
+                    bus_renderer.updateColorRamp(bus_color_ramp)
+
+                    # generate symbology for line layer
+                    line_target = "loading_percent"
+
+                    line_renderer = QgsGraduatedSymbolRenderer()
+                    line_renderer.setClassificationMethod(classification_methode)
+                    line_renderer.setClassAttribute(line_target)
+
+                    # add categories (10 categories, 10% increments)
+                    for x in range(10):
+                        low_bound = x * 10
+                        high_bound = (x + 1) * 10 - .0001
+                        if x == 9:  # fix for not including 100%
+                            high_bound = 100
+                        line_symbol = QgsLineSymbol()
+                        line_symbol.setWidth(.6)
+                        line_renderer.addClassRange(
+                            QgsRendererRange(
+                                QgsClassificationRange(f'class {low_bound}-{high_bound}', low_bound, high_bound),
+                                line_symbol
+                            )
+                        )
+                    line_renderer.updateColorRamp(line_color_ramp)
+
+                # find min and max voltage. Used for finding color of symbols.
+                max_kv = max(voltage_levels)
+                min_kv = min(voltage_levels)
                 for vn_kv in voltage_levels:
                     buses, lines = filter_by_voltage(net, vn_kv)
 
-                    nodes = geo.dump_to_geojson(net, nodes=buses)
-                    branches = geo.dump_to_geojson(net, branches=lines)
+                    # Color layers by voltage level
+                    if not render:
+                        def map_to_range(x: float, xmin: float, xmax: float, min: float = 0.0, max: float = 1.0):
+                            return (x - xmin) / (xmax - xmin) * (max - min) + min
+                        bus_symbol = QgsMarkerSymbol()
+                        bus_renderer = QgsSingleSymbolRenderer(bus_symbol)
 
-                    # create bus and line layers
-                    bus_layer = QgsVectorLayer(geojson.dumps(nodes), layer_name + "_" + str(vn_kv) + "_bus", "ogr")
-                    line_layer = QgsVectorLayer(geojson.dumps(branches), layer_name + "_" + str(vn_kv) + "_line", "ogr")
-                    # add layers to group
-                    QgsProject.instance().addMapLayer(bus_layer, False)
-                    QgsProject.instance().addMapLayer(line_layer, False)
-                    group.addLayer(bus_layer)
-                    group.addLayer(line_layer)
+                        line_symbol = QgsLineSymbol()
+                        line_symbol.setWidth(.6)
+                        line_renderer = QgsSingleSymbolRenderer(line_symbol)
+                        # set color of symbol based on vn_kv
+                        bus_symbol.setColor(bus_color_ramp.color(map_to_range(vn_kv, min_kv, max_kv)))
+                        line_symbol.setColor(line_color_ramp.color(map_to_range(vn_kv, min_kv, max_kv)))
 
-                    # Move layers above TileLayer
-                    root.setHasCustomLayerOrder(True)
-                    order = root.customLayerOrder()
-                    order.insert(0, order.pop())
-                    order.insert(0, order.pop())
-                    root.setCustomLayerOrder(order)
+
+                    # create bus and line layers if they contain features
+                    if buses:
+                        nodes = geo.dump_to_geojson(net, nodes=buses)
+                        bus_layer = QgsVectorLayer(geojson.dumps(nodes), layer_name + "_" + str(vn_kv) + "_bus", "ogr")
+                        bus_layer.setRenderer(bus_renderer)
+                        # add layer to group
+                        QgsProject.instance().addMapLayer(bus_layer, False)
+                        group.addLayer(bus_layer)
+
+                    if lines:
+                        branches = geo.dump_to_geojson(net, branches=lines)
+                        line_layer = QgsVectorLayer(geojson.dumps(branches), layer_name + "_" + str(vn_kv) + "_line", "ogr")
+                        line_layer.setRenderer(line_renderer)
+                        # add layer to group
+                        QgsProject.instance().addMapLayer(line_layer, False)
+                        group.addLayer(line_layer)
+
+                    if buses or lines:
+                        # Move layers above TileLayer
+                        root.setHasCustomLayerOrder(True)
+                        order = root.customLayerOrder()
+                        order.insert(0, order.pop())
+                        if buses and lines:
+                            order.insert(0, order.pop())
+                        root.setCustomLayerOrder(order)
