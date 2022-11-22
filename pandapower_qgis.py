@@ -33,9 +33,9 @@ import numpy
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
 from qgis.PyQt.QtGui import QIcon, QColor
 from qgis.PyQt.QtWidgets import QAction, QFileDialog, QListWidgetItem
-from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, QgsDistanceArea, QgsPointXY, QgsVectorLayer, \
-    QgsApplication, QgsGraduatedSymbolRenderer, QgsSingleSymbolRenderer, QgsRendererRange, QgsClassificationRange, \
-    QgsMarkerSymbol, QgsLineSymbol, QgsGradientColorRamp, QgsSymbolLayerRegistry, NULL
+from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, QgsVectorLayer, QgsApplication, \
+    QgsGraduatedSymbolRenderer, QgsSingleSymbolRenderer, QgsRendererRange, QgsClassificationRange, \
+    QgsMarkerSymbol, QgsLineSymbol, QgsGradientColorRamp, NULL
 
 # Initialize Qt resources from file resources.py
 from .resources import *
@@ -645,6 +645,10 @@ class ppqgis:
             result = self.dlg_import.exec_()
             # See if OK was pressed
             if result:
+                folder_name = self.dlg_import.folderSelect.filePath()
+                as_file = True
+                if not folder_name:
+                    as_file = False
                 layer_name = self.dlg_import.layerNameEdit.text()
                 run_pandapower = self.dlg_import.runpp.isChecked()
                 render = self.dlg_import.gradRender.isChecked()
@@ -732,6 +736,7 @@ class ppqgis:
                     if not render:
                         def map_to_range(x: float, xmin: float, xmax: float, min: float = 0.0, max: float = 1.0):
                             return (x - xmin) / (xmax - xmin) * (max - min) + min
+
                         bus_symbol = QgsMarkerSymbol()
                         bus_renderer = QgsSingleSymbolRenderer(bus_symbol)
 
@@ -742,23 +747,39 @@ class ppqgis:
                         bus_symbol.setColor(bus_color_ramp.color(map_to_range(vn_kv, min_kv, max_kv)))
                         line_symbol.setColor(line_color_ramp.color(map_to_range(vn_kv, min_kv, max_kv)))
 
+                    bus = {
+                        'object': buses,
+                        'suffix': 'bus',
+                        'renderer': bus_renderer,
+                    }
+                    line = {
+                        'object': lines,
+                        'suffix': 'line',
+                        'renderer': line_renderer,
+                    }
 
                     # create bus and line layers if they contain features
-                    if buses:
-                        nodes = geo.dump_to_geojson(net, nodes=buses)
-                        bus_layer = QgsVectorLayer(geojson.dumps(nodes), layer_name + "_" + str(vn_kv) + "_bus", "ogr")
-                        bus_layer.setRenderer(bus_renderer)
+                    for obj in [bus, line]:
+                        # avoid adding empty layer
+                        if not obj['object']:
+                            continue
+                        type_layer_name = f'{layer_name}_{str(vn_kv)}_{obj["suffix"]}'
+                        file_path = f'{folder_name}\\{type_layer_name}.geojson'
+                        gj = geo.dump_to_geojson(net,
+                                                 nodes=obj['object'] if obj['suffix'] == 'bus' else False,
+                                                 branches=obj['object'] if obj['suffix'] == 'line' else False)
+                        if as_file:
+                            with open(file_path, 'w') as file:
+                                file.write(geojson.dumps(gj))
+                                file.close()
+                                print(file.name)
+                            layer = QgsVectorLayer(file_path, type_layer_name, "ogr")
+                        else:
+                            layer = QgsVectorLayer(geojson.dumps(gj), type_layer_name, "ogr")
+                        layer.setRenderer(obj['renderer'])
                         # add layer to group
-                        QgsProject.instance().addMapLayer(bus_layer, False)
-                        group.addLayer(bus_layer)
-
-                    if lines:
-                        branches = geo.dump_to_geojson(net, branches=lines)
-                        line_layer = QgsVectorLayer(geojson.dumps(branches), layer_name + "_" + str(vn_kv) + "_line", "ogr")
-                        line_layer.setRenderer(line_renderer)
-                        # add layer to group
-                        QgsProject.instance().addMapLayer(line_layer, False)
-                        group.addLayer(line_layer)
+                        QgsProject.instance().addMapLayer(layer, False)
+                        group.addLayer(layer)
 
                     if buses or lines:
                         # Move layers above TileLayer
