@@ -772,7 +772,6 @@ class ppqgis:
                             with open(file_path, 'w') as file:
                                 file.write(geojson.dumps(gj))
                                 file.close()
-                                print(file.name)
                             layer = QgsVectorLayer(file_path, type_layer_name, "ogr")
                         else:
                             layer = QgsVectorLayer(geojson.dumps(gj), type_layer_name, "ogr")
