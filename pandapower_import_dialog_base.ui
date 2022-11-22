@@ -138,6 +138,27 @@
     </layout>
    </item>
    <item>
+    <layout class="QHBoxLayout" name="checkboxes">
+     <item>
+      <widget class="QCheckBox" name="runpp">
+       <property name="text">
+        <string>Run PandaPower</string>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <widget class="QCheckBox" name="gradRender">
+       <property name="text">
+        <string>color lines by load</string>
+       </property>
+       <property name="checked">
+        <bool>true</bool>
+       </property>
+      </widget>
+     </item>
+    </layout>
+   </item>
+   <item>
     <widget class="QLabel" name="folderSelectLabel">
      <property name="text">
       <string>Select save folder:</string>
