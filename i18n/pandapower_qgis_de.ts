@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!DOCTYPE TS>
-<TS version="2.1" language="de_DE" sourcelanguage="en">
+<!DOCTYPE TS><TS version="2.0" language="de_DE" sourcelanguage="en">
 <context>
     <name>exportDialog</name>
     <message>
@@ -24,16 +23,6 @@
         <translation>Frequenz:</translation>
     </message>
     <message>
-        <location filename="../pandapower_export_dialog_base.ui" line="52"/>
-        <source>50</source>
-        <translation></translation>
-    </message>
-    <message>
-        <location filename="../pandapower_export_dialog_base.ui" line="55"/>
-        <source>network frequency</source>
-        <translation>Netzfrequenz</translation>
-    </message>
-    <message>
         <location filename="../pandapower_export_dialog_base.ui" line="62"/>
         <source>Hz</source>
         <translation></translation>
@@ -42,11 +31,6 @@
         <location filename="../pandapower_export_dialog_base.ui" line="73"/>
         <source>Reference appernt power p.U.:</source>
         <translation>Referenz Scheinleistung pro Einheit:</translation>
-    </message>
-    <message>
-        <location filename="../pandapower_export_dialog_base.ui" line="83"/>
-        <source>1e3</source>
-        <translation></translation>
     </message>
     <message>
         <location filename="../pandapower_export_dialog_base.ui" line="94"/>
@@ -169,14 +153,19 @@
         <translation>von pandapower importieren</translation>
     </message>
     <message>
-        <location filename="../pandapower_qgis.py" line="639"/>
+        <location filename="../pandapower_qgis.py" line="647"/>
         <source>#Bus: </source>
         <translation>#Busse: </translation>
     </message>
     <message>
-        <location filename="../pandapower_qgis.py" line="640"/>
+        <location filename="../pandapower_qgis.py" line="648"/>
         <source>#Lines: </source>
         <translation>#Leitungen: </translation>
+    </message>
+    <message>
+        <location filename="../pandapower_qgis.py" line="299"/>
+        <source>layers</source>
+        <translation>Ebenen</translation>
     </message>
 </context>
 </TS>

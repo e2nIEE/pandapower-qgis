@@ -49,10 +49,10 @@
        <item>
         <widget class="QLineEdit" name="frequencyEdit">
          <property name="text">
-          <string>50</string>
+          <string notr="true">50</string>
          </property>
          <property name="placeholderText">
-          <string>network frequency</string>
+          <string notr="true">50</string>
          </property>
         </widget>
        </item>
@@ -77,10 +77,10 @@
        <item>
         <widget class="QLineEdit" name="refApperentPowerEdit">
          <property name="text">
-          <string>1e3</string>
+          <string notr="true">1</string>
          </property>
          <property name="placeholderText">
-          <string>1e3</string>
+          <string notr="true">1</string>
          </property>
         </widget>
        </item>
@@ -124,27 +124,9 @@
      </property>
      <column>
       <property name="text">
-       <string>layernames</string>
+       <string notr="true">layernames</string>
       </property>
      </column>
-     <item>
-      <property name="text">
-       <string>layers</string>
-      </property>
-      <property name="flags">
-       <set>ItemIsSelectable|ItemIsDragEnabled|ItemIsDropEnabled|ItemIsUserCheckable|ItemIsEnabled|ItemIsTristate</set>
-      </property>
-      <item>
-       <property name="text">
-        <string>testlayer1</string>
-       </property>
-      </item>
-      <item>
-       <property name="text">
-        <string>testlayer2</string>
-       </property>
-      </item>
-     </item>
     </widget>
    </item>
    <item>
