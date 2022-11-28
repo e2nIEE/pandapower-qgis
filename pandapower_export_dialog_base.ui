@@ -112,13 +112,39 @@
     </widget>
    </item>
    <item>
-    <widget class="QListWidget" name="layerSelectWidget">
-     <property name="showDropIndicator" stdset="0">
-      <bool>false</bool>
-     </property>
+    <widget class="QTreeWidget" name="layerTreeWidget">
      <property name="selectionMode">
       <enum>QAbstractItemView::NoSelection</enum>
      </property>
+     <property name="selectionBehavior">
+      <enum>QAbstractItemView::SelectItems</enum>
+     </property>
+     <property name="headerHidden">
+      <bool>true</bool>
+     </property>
+     <column>
+      <property name="text">
+       <string>layernames</string>
+      </property>
+     </column>
+     <item>
+      <property name="text">
+       <string>layers</string>
+      </property>
+      <property name="flags">
+       <set>ItemIsSelectable|ItemIsDragEnabled|ItemIsDropEnabled|ItemIsUserCheckable|ItemIsEnabled|ItemIsTristate</set>
+      </property>
+      <item>
+       <property name="text">
+        <string>testlayer1</string>
+       </property>
+      </item>
+      <item>
+       <property name="text">
+        <string>testlayer2</string>
+       </property>
+      </item>
+     </item>
     </widget>
    </item>
    <item>
