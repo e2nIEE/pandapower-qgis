@@ -16,7 +16,7 @@
   <property name="locale">
    <locale language="English" country="Germany"/>
   </property>
-  <layout class="QVBoxLayout" name="verticalLayout_2">
+  <layout class="QVBoxLayout" name="_2">
    <item>
     <layout class="QHBoxLayout" name="featureCounts">
      <item>
@@ -28,7 +28,7 @@
         </sizepolicy>
        </property>
        <property name="text">
-        <string>#Bus: </string>
+        <string>#Buses: </string>
        </property>
       </widget>
      </item>
@@ -41,7 +41,7 @@
         </sizepolicy>
        </property>
        <property name="text">
-        <string>#Lines:</string>
+        <string>#Lines: </string>
        </property>
       </widget>
      </item>
@@ -161,7 +161,7 @@
    <item>
     <widget class="QLabel" name="folderSelectLabel">
      <property name="text">
-      <string>Select save folder:</string>
+      <string comment="Select save folder:">Select save folder:</string>
      </property>
     </widget>
    </item>
@@ -174,7 +174,7 @@
       <bool>false</bool>
      </property>
      <property name="dialogTitle">
-      <string>PandaPower Import - Select Save Folder:</string>
+      <string>Import pandapower network - Select save folder:</string>
      </property>
      <property name="storageMode">
       <enum>QgsFileWidget::GetDirectory</enum>

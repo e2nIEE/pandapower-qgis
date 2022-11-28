@@ -19,7 +19,7 @@
      <item>
       <widget class="QLabel" name="exportedBus">
        <property name="text">
-        <string>Buses  exported: </string>
+        <string>Buses exported: </string>
        </property>
       </widget>
      </item>

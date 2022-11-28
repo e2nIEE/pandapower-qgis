@@ -90,7 +90,7 @@ class ppqgis:
         locale_path = os.path.join(
             self.plugin_dir,
             'i18n',
-            'ppqgis_{}.qm'.format(locale))
+            'pandapower_qgis_{}.qm'.format(locale))
 
         if os.path.exists(locale_path):
             self.translator = QTranslator()
@@ -154,7 +154,7 @@ class ppqgis:
         :rtype: QString
         """
         # noinspection PyTypeChecker,PyArgumentList,PyCallByClass
-        return QCoreApplication.translate('ppqgis', message)
+        return QCoreApplication.translate('pandapower_qgis', message)
 
     def add_action(
             self,
@@ -447,7 +447,7 @@ class ppqgis:
                         if props['pp_index'] not in bus_id_lookup:
                             bus_id_lookup[props['pp_index']] = bid
                         else:
-                            print(f'pp_index "{props["pp_index"]}" double assigned! FeatureID: {feature.id()}')
+                            QgsMessageLog.logMessage(f'pp_index "{props["pp_index"]}" double assigned! FeatureID: {feature.id()}', level=Qgis.MessageLevel.Warning)
 
                     if pp_type == 'line' and layer_name not in line_layers:
                         line_layers.append(layer_name)
@@ -551,8 +551,9 @@ class ppqgis:
                             to_bus = bus_id_lookup[required['to_bus']]
 
                         if from_bus is None or to_bus is None:
-                            print(
-                                f'Could not find from_bus {required["from_bus"]} or to_bus {required["to_bus"]} for {feature.id()}')
+                            QgsMessageLog.logMessage(
+                                f'Could not find from_bus {required["from_bus"]} or to_bus {required["to_bus"]} for {feature.id()}',
+                                level=Qgis.MessageLevel.Warning)
                             selectIds.append(feature.id())
                             line_error_count += 1
                             continue
@@ -634,8 +635,8 @@ class ppqgis:
             # add voltage levels to all lines
             pp.add_column_from_node_to_elements(net, 'vn_kv', True, 'line')
 
-            self.dlg_import.BusLabel.setText("#Bus: " + str(len(net.bus)))
-            self.dlg_import.LineLabel.setText("#Lines: " + str(len(net.line)))
+            self.dlg_import.BusLabel.setText(self.tr(u'#Bus: ') + str(len(net.bus)))
+            self.dlg_import.LineLabel.setText(self.tr('#Lines: ') + str(len(net.line)))
             # attempt to set the layer name to the filename and set project crs as default
             self.dlg_import.layerNameEdit.setText(os.path.basename(file).split('.')[0])
             self.dlg_import.projectionSelect.setCrs(QgsProject.instance().crs())
