@@ -32,7 +32,7 @@ import numpy
 
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
 from qgis.PyQt.QtGui import QIcon, QColor
-from qgis.PyQt.QtWidgets import QAction, QFileDialog, QListWidgetItem
+from qgis.PyQt.QtWidgets import QAction, QFileDialog, QListWidgetItem, QTreeWidgetItem
 from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, QgsVectorLayer, QgsApplication, \
     QgsGraduatedSymbolRenderer, QgsSingleSymbolRenderer, QgsRendererRange, QgsClassificationRange, \
     QgsMarkerSymbol, QgsLineSymbol, QgsGradientColorRamp, NULL
@@ -282,7 +282,6 @@ class ppqgis:
         # Create the dialog with elements (after translation) and keep reference
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
         if self.first_start_export:
-            initial_run = True
             self.first_start_export = False
             self.dlg_export = ppExportDialog()
             self.dlg_export_summary = ppExportSummaryDialog()
@@ -290,31 +289,41 @@ class ppqgis:
         # get all layers
         layers = QgsProject.instance().mapLayers()
 
-        layer_widget = self.dlg_export.layerSelectWidget
+        tree_widget = self.dlg_export.layerTreeWidget
+
+        # clear tree of all items
+        tree_widget.clear()
+
+        # Generate Tristate Group item for layers
+        layer_item = QTreeWidgetItem(tree_widget)
+        layer_item.setText(0, self.tr("layers"))
+        layer_item.setFlags(layer_item.flags() | QtCore.Qt.ItemIsTristate | QtCore.Qt.ItemIsUserCheckable)
+        layer_item.setExpanded(True)
+        tree_widget.addTopLevelItem(layer_item)
 
         layer_lookup = {}
 
         for layer in layers:
-            if not initial_run:
-                self.dlg_export.layerSelectWidget.clear()
             name = layers[layer].name()
-            # add layer item with checkbox to listWidget
-            list_item = QListWidgetItem(self.dlg_export.layerSelectWidget)
-            list_item.setText(name)
-            list_item.setCheckState(QtCore.Qt.CheckState.Checked)
-            layer_widget.addItem(list_item)
-            item_index = layer_widget.indexFromItem(list_item)
+            # add layer item with checkbox to treeWidget
+            tree_item = QTreeWidgetItem(layer_item)
+            tree_item.setText(0, name)
+            tree_item.setFlags(tree_item.flags() | QtCore.Qt.ItemIsUserCheckable)
+            tree_item.setCheckState(0, QtCore.Qt.CheckState.Checked)
+            layer_item.addChild(tree_item)
+            item_index = layer_item.indexOfChild(tree_item)
 
             # Make item name clickable. (as opposed to checkbox only)
-            self.dlg_export.layerSelectWidget.itemPressed["QListWidgetItem*"].connect(
-                lambda item: item.setCheckState(
+            # If using itemClicked checkbox becomes unresponsive
+            tree_widget.itemPressed.connect(
+                lambda item: item.setCheckState(0,
                     QtCore.Qt.CheckState.Checked
-                    if item.checkState() == QtCore.Qt.CheckState.Unchecked
+                    if item.checkState(0) == QtCore.Qt.CheckState.Unchecked
                     else QtCore.Qt.CheckState.Unchecked
                 )
             )
 
-            layer_lookup[item_index.row()] = layer
+            layer_lookup[item_index] = layer
 
         # show the dialog
         self.dlg_export.show()
@@ -343,10 +352,9 @@ class ppqgis:
 
             # get selected layers
             selected_layers = list()
-            for ind in range(self.dlg_export.layerSelectWidget.count()):
-                if layer_widget.item(ind).checkState() == QtCore.Qt.CheckState.Checked:
+            for ind in range(layer_item.childCount()):
+                if layer_item.child(ind).checkState(0) == QtCore.Qt.CheckState.Checked:
                     selected_layers.append(layer_lookup[ind])
-
             # create a bus_lookup table
             bus_id_lookup = dict()
             line_layers = list()
