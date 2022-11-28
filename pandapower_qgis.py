@@ -335,8 +335,14 @@ class ppqgis:
 
             # variables required for new network
             name = self.dlg_export.nameEdit.text()
-            f_hz = float(self.dlg_export.frequencyEdit.text())
-            sn_mva = float(self.dlg_export.refApperentPowerEdit.text())
+            try:
+                f_hz = float(self.dlg_export.frequencyEdit.text())
+            except ValueError:
+                f_hz = 50
+            try:
+                sn_mva = float(self.dlg_export.refApperentPowerEdit.text())
+            except ValueError:
+                sn_mva = 1
             add_stdtypes = self.dlg_export.addStdTypes.isChecked()
 
             import pandapower as pp
