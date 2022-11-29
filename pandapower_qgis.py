@@ -31,11 +31,10 @@ import numpy
 # TODO: Write a try for geopandas import and error out without crashing
 
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
-from qgis.PyQt.QtGui import QIcon, QColor
+from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog, QListWidgetItem, QTreeWidgetItem
-from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, QgsVectorLayer, QgsApplication, \
-    QgsGraduatedSymbolRenderer, QgsSingleSymbolRenderer, QgsRendererRange, QgsClassificationRange, \
-    QgsMarkerSymbol, QgsLineSymbol, QgsGradientColorRamp, NULL
+from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, NULL
+from qgis.gui import QgsMessageBar
 
 # Initialize Qt resources from file resources.py
 from .resources import *
@@ -43,6 +42,7 @@ from .resources import *
 from .pandapower_import_dialog import ppImportDialog
 from .pandapower_export_dialog import ppExportDialog
 from .pandapower_export_summary_dialog import ppExportSummaryDialog
+from .ppqgis_import import power_network, pipes_network
 
 # install requirements
 import re
@@ -56,19 +56,6 @@ from typing import List
 import warnings
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
-
-# constants for color ramps
-BUS_LOW_COLOR = "#ccff00"  # lime
-BUS_HIGH_COLOR = "#00cc44"  # green
-LINE_LOW_COLOR = "#0000ff"  # blue
-LINE_HIGH_COLOR = "#ff0022"  # red
-
-
-def filter_by_voltage(net, vn_kv, tol=10):
-    buses = set(net.bus.loc[abs(net.bus.vn_kv - vn_kv) <= tol].index)
-    lines = set(net.line.loc[net.line.from_bus.isin(buses) | net.line.to_bus.isin(buses)].index)
-    return buses, lines
-
 
 class ppqgis:
     """QGIS Plugin Implementation."""
@@ -99,7 +86,7 @@ class ppqgis:
 
         # Declare instance attributes
         self.actions = []
-        self.menu = self.tr(u'&pandapower QGis Plugin')
+        self.menu = self.tr(u'&pandapower QGIS Plugin')
 
         # Check if plugin was started the first time in current QGIS session
         # Must be set in initGui() to survive plugin reloads
@@ -257,7 +244,7 @@ class ppqgis:
         """Removes the plugin menu item and icon from QGIS GUI."""
         for action in self.actions:
             self.iface.removePluginMenu(
-                self.tr(u'&pandapower QGis Plugin'),
+                self.tr(u'&pandapower QGIS Plugin'),
                 action)
             self.iface.removeToolBarIcon(action)
 
@@ -629,177 +616,27 @@ class ppqgis:
             self.first_start_import = False
             self.dlg_import = ppImportDialog()
 
-        dlg = QFileDialog()
-        # dlg.setFileMode(QFileDialog.AnyFile)
-        dlg.setNameFilter("pandapower networks (*.json)")
-        dlg.selectNameFilter("pandapower networks (*.json)")
+        # Open file dialog showing json files and directories
+        filters = "all files ();;json files (*.json)"
+        selected = "json files (*.json)"
+        filename = QFileDialog.getOpenFileName(
+            None,
+            self.tr("Import pandapower or pandapipes network - Open File"),
+            self.dir,
+            filters,
+            selected)[0]
 
-        filters = "pandapower networks (*.json)"
-        selected = "pandapower networks (*.json)"
-        file = QFileDialog.getOpenFileName(None, "File Dialog", self.dir, filters, selected)[0]
-        current_crs = int(QgsProject.instance().crs().authid().split(':')[1])
-
-        if file:
+        if filename:
             self.installer_func()
-            import pandapower as pp
-            import geo  # in a future version this should be replaced by pandapower.plotting.geo as geo
-            import geojson
-            net = pp.from_json(file)
 
-            # add voltage levels to all lines
-            pp.add_column_from_node_to_elements(net, 'vn_kv', True, 'line')
-
-            self.dlg_import.BusLabel.setText(self.tr(u'#Bus: ') + str(len(net.bus)))
-            self.dlg_import.LineLabel.setText(self.tr('#Lines: ') + str(len(net.line)))
-            # attempt to set the layer name to the filename and set project crs as default
-            self.dlg_import.layerNameEdit.setText(os.path.basename(file).split('.')[0])
-            self.dlg_import.projectionSelect.setCrs(QgsProject.instance().crs())
-            # show the dialog
-            self.dlg_import.show()
-            # Run the dialog event loop
-            result = self.dlg_import.exec_()
-            # See if OK was pressed
-            if result:
-                folder_name = self.dlg_import.folderSelect.filePath()
-                as_file = True
-                if not folder_name:
-                    as_file = False
-                layer_name = self.dlg_import.layerNameEdit.text()
-                run_pandapower = self.dlg_import.runpp.isChecked()
-                render = self.dlg_import.gradRender.isChecked()
-                try:
-                    crs = int(self.dlg_import.projectionSelect.crs().authid().split(':')[1])
-                except ValueError:
-                    crs = current_crs
-
-                # run pandapower if selected
-                if run_pandapower:
-                    pp.runpp(net)
-
-                root = QgsProject.instance().layerTreeRoot()
-                # check if group exists
-                group = root.findGroup(layer_name)
-                # create group if it does not exist
-                if not group:
-                    group = root.addGroup(layer_name)
-
-                voltage_levels = net.bus.vn_kv.unique()
-                geo.convert_crs(net, epsg_in=crs, epsg_out=current_crs)
-
-                # generate color ramp
-                bus_color_ramp = QgsGradientColorRamp(QColor(BUS_LOW_COLOR), QColor(BUS_HIGH_COLOR))
-                line_color_ramp = QgsGradientColorRamp(QColor(LINE_LOW_COLOR), QColor(LINE_HIGH_COLOR))
-
-                # Color lines by load/ buses by voltage
-                if render:
-                    classification_methode = QgsApplication.classificationMethodRegistry().method("EqualInterval")
-
-                    # generate symbology for bus layer
-                    bus_target = "vm_pu"
-                    min_target = "min_vm_pu"
-                    max_target = "max_vm_pu"
-                    # map value from its possible min/max to 0/100
-                    classification_str = f'scale_linear("{bus_target}", 0.9, 1.1, 0, 100)'
-
-                    bus_renderer = QgsGraduatedSymbolRenderer()
-                    bus_renderer.setClassificationMethod(classification_methode)
-                    bus_renderer.setClassAttribute(classification_str)
-                    # add categories (10 categories, 10% increments)
-                    for x in range(10):
-                        low_bound = x * 10
-                        high_bound = (x + 1) * 10 - .0001
-                        if x == 9:  # fix for not including 100%
-                            high_bound = 100
-                        bus_renderer.addClassRange(
-                            QgsRendererRange(
-                                QgsClassificationRange(f'class {low_bound}-{high_bound}', low_bound, high_bound),
-                                QgsMarkerSymbol()
-                            )
-                        )
-                    bus_renderer.updateColorRamp(bus_color_ramp)
-
-                    # generate symbology for line layer
-                    line_target = "loading_percent"
-
-                    line_renderer = QgsGraduatedSymbolRenderer()
-                    line_renderer.setClassificationMethod(classification_methode)
-                    line_renderer.setClassAttribute(line_target)
-
-                    # add categories (10 categories, 10% increments)
-                    for x in range(10):
-                        low_bound = x * 10
-                        high_bound = (x + 1) * 10 - .0001
-                        if x == 9:  # fix for not including 100%
-                            high_bound = 100
-                        line_symbol = QgsLineSymbol()
-                        line_symbol.setWidth(.6)
-                        line_renderer.addClassRange(
-                            QgsRendererRange(
-                                QgsClassificationRange(f'class {low_bound}-{high_bound}', low_bound, high_bound),
-                                line_symbol
-                            )
-                        )
-                    line_renderer.updateColorRamp(line_color_ramp)
-
-                # find min and max voltage. Used for finding color of symbols.
-                max_kv = max(voltage_levels)
-                min_kv = min(voltage_levels)
-                for vn_kv in voltage_levels:
-                    buses, lines = filter_by_voltage(net, vn_kv)
-
-                    # Color layers by voltage level
-                    if not render:
-                        def map_to_range(x: float, xmin: float, xmax: float, min: float = 0.0, max: float = 1.0):
-                            return (x - xmin) / (xmax - xmin) * (max - min) + min
-
-                        bus_symbol = QgsMarkerSymbol()
-                        bus_renderer = QgsSingleSymbolRenderer(bus_symbol)
-
-                        line_symbol = QgsLineSymbol()
-                        line_symbol.setWidth(.6)
-                        line_renderer = QgsSingleSymbolRenderer(line_symbol)
-                        # set color of symbol based on vn_kv
-                        bus_symbol.setColor(bus_color_ramp.color(map_to_range(vn_kv, min_kv, max_kv)))
-                        line_symbol.setColor(line_color_ramp.color(map_to_range(vn_kv, min_kv, max_kv)))
-
-                    bus = {
-                        'object': buses,
-                        'suffix': 'bus',
-                        'renderer': bus_renderer,
-                    }
-                    line = {
-                        'object': lines,
-                        'suffix': 'line',
-                        'renderer': line_renderer,
-                    }
-
-                    # create bus and line layers if they contain features
-                    for obj in [bus, line]:
-                        # avoid adding empty layer
-                        if not obj['object']:
-                            continue
-                        type_layer_name = f'{layer_name}_{str(vn_kv)}_{obj["suffix"]}'
-                        file_path = f'{folder_name}\\{type_layer_name}.geojson'
-                        gj = geo.dump_to_geojson(net,
-                                                 nodes=obj['object'] if obj['suffix'] == 'bus' else False,
-                                                 branches=obj['object'] if obj['suffix'] == 'line' else False)
-                        if as_file:
-                            with open(file_path, 'w') as file:
-                                file.write(geojson.dumps(gj))
-                                file.close()
-                            layer = QgsVectorLayer(file_path, type_layer_name, "ogr")
-                        else:
-                            layer = QgsVectorLayer(geojson.dumps(gj), type_layer_name, "ogr")
-                        layer.setRenderer(obj['renderer'])
-                        # add layer to group
-                        QgsProject.instance().addMapLayer(layer, False)
-                        group.addLayer(layer)
-
-                    if buses or lines:
-                        # Move layers above TileLayer
-                        root.setHasCustomLayerOrder(True)
-                        order = root.customLayerOrder()
-                        order.insert(0, order.pop())
-                        if buses and lines:
-                            order.insert(0, order.pop())
-                        root.setCustomLayerOrder(order)
+            with open(filename, 'r') as file:
+                content = file.read()
+                if '"pandapowerNet"' in content:
+                    power_network(self, filename)
+                elif '"pandapipesNet"' in content:
+                    pipes_network(self, filename)
+                else:
+                    self.iface.messageBar().pushMessage(
+                        'The selected json file could not be loaded. Could not find "pandapowerNet" or "pandapipesNet"',
+                        level=Qgis.Critical
+                    )
