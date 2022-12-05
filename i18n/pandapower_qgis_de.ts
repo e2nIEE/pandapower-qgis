@@ -1,46 +1,57 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!DOCTYPE TS><TS version="2.0" language="de_DE" sourcelanguage="en">
+<!DOCTYPE TS>
+<TS version="2.1" language="de_DE" sourcelanguage="en">
 <context>
     <name>exportDialog</name>
     <message>
         <location filename="../pandapower_export_dialog_base.ui" line="14"/>
-        <source>Export to PandaPower</source>
+        <source>Export pandapower network</source>
         <translation>Export nach pandapower</translation>
     </message>
     <message>
-        <location filename="../pandapower_export_dialog_base.ui" line="25"/>
+        <location filename="../pandapower_export_dialog_base.ui" line="32"/>
         <source>Name:</source>
         <translation></translation>
     </message>
     <message>
-        <location filename="../pandapower_export_dialog_base.ui" line="32"/>
+        <location filename="../pandapower_export_dialog_base.ui" line="39"/>
         <source>network name</source>
         <translation>Name des Netzwerk</translation>
     </message>
     <message>
-        <location filename="../pandapower_export_dialog_base.ui" line="45"/>
+        <location filename="../pandapower_export_dialog_base.ui" line="52"/>
         <source>Frequency:</source>
         <translation>Frequenz:</translation>
     </message>
     <message>
-        <location filename="../pandapower_export_dialog_base.ui" line="62"/>
+        <location filename="../pandapower_export_dialog_base.ui" line="69"/>
         <source>Hz</source>
         <translation></translation>
     </message>
     <message>
-        <location filename="../pandapower_export_dialog_base.ui" line="73"/>
+        <location filename="../pandapower_export_dialog_base.ui" line="80"/>
         <source>Reference appernt power p.U.:</source>
         <translation>Referenz Scheinleistung pro Einheit:</translation>
     </message>
     <message>
-        <location filename="../pandapower_export_dialog_base.ui" line="94"/>
+        <location filename="../pandapower_export_dialog_base.ui" line="115"/>
         <source>add standard types</source>
         <translation>Standardtypen erstellen</translation>
     </message>
     <message>
-        <location filename="../pandapower_export_dialog_base.ui" line="110"/>
+        <location filename="../pandapower_export_dialog_base.ui" line="131"/>
         <source>Select layers to export:</source>
         <translation>Zu exportierende Ebenen</translation>
+    </message>
+    <message>
+        <location filename="../pandapower_export_dialog_base.ui" line="101"/>
+        <source>Fluid:</source>
+        <translation>Flüssigkeit/Gas:</translation>
+    </message>
+    <message>
+        <location filename="../pandapower_export_dialog_base.ui" line="23"/>
+        <source>switch to export pandapipes</source>
+        <translation>zu exportieren von pandapipes umschalten</translation>
     </message>
 </context>
 <context>
@@ -138,34 +149,29 @@
 <context>
     <name>ppqgis</name>
     <message>
-        <location filename="../pandapower_qgis.py" line="259"/>
-        <source>&amp;pandapower QGis Plugin</source>
-        <translation></translation>
-    </message>
-    <message>
-        <location filename="../pandapower_qgis.py" line="240"/>
+        <location filename="../pandapower_qgis.py" line="226"/>
         <source>export to pandapower</source>
         <translation>nach pandapower exportieren</translation>
     </message>
     <message>
-        <location filename="../pandapower_qgis.py" line="246"/>
+        <location filename="../pandapower_qgis.py" line="232"/>
         <source>import from pandapower</source>
         <translation>von pandapower importieren</translation>
     </message>
     <message>
-        <location filename="../pandapower_qgis.py" line="647"/>
-        <source>#Bus: </source>
-        <translation>#Busse: </translation>
-    </message>
-    <message>
-        <location filename="../pandapower_qgis.py" line="648"/>
-        <source>#Lines: </source>
-        <translation>#Leitungen: </translation>
-    </message>
-    <message>
-        <location filename="../pandapower_qgis.py" line="299"/>
+        <location filename="../pandapower_qgis.py" line="281"/>
         <source>layers</source>
         <translation>Ebenen</translation>
+    </message>
+    <message>
+        <location filename="../pandapower_qgis.py" line="245"/>
+        <source>&amp;pandapower QGIS Plugin</source>
+        <translation></translation>
+    </message>
+    <message>
+        <location filename="../pandapower_qgis.py" line="343"/>
+        <source>Import pandapower or pandapipes network - Open File</source>
+        <translation>von pandapower oder pandapipes importieren - Datei öffnen</translation>
     </message>
 </context>
 </TS>

@@ -41,3 +41,42 @@ class ppExportDialog(QtWidgets.QDialog, FORM_CLASS):
         # http://qt-project.org/doc/qt-4.8/designer-using-a-ui-file.html
         # #widgets-and-dialogs-with-auto-connect
         self.setupUi(self)
+        self.power = True
+        self.powerPipesToggle.clicked.connect(self.switch)
+
+    def convert_to_pipes(self):
+        self.setWindowTitle(self.tr("Export pandapipes network"))
+        # set frequencyHLayout content invisible
+        self.frequencyEdit.setVisible(False)
+        self.frequencyLabel.setVisible(False)
+        self.frequencyUnitLabel.setVisible(False)
+        # set repApHLayout content invisible
+        self.refApperentPowerEdit.setVisible(False)
+        self.refApperentPowerLabel.setVisible(False)
+        # set pipesFluidHLayout content visible
+        self.fluidLabel.setVisible(True)
+        self.fluidLineEdit.setVisible(True)
+        # change button label
+        self.powerPipesToggle.setText(self.tr("switch to export pandapower"))
+
+    def convert_to_power(self):
+        self.setWindowTitle(self.tr("Export pandapower network"))
+        # set pipesFluidHLayout content invisible
+        self.fluidLabel.setVisible(False)
+        self.fluidLineEdit.setVisible(False)
+        # set frequencyHLayout content visible
+        self.frequencyEdit.setVisible(True)
+        self.frequencyLabel.setVisible(True)
+        self.frequencyUnitLabel.setVisible(True)
+        # set repApHLayout content visible
+        self.refApperentPowerEdit.setVisible(True)
+        self.refApperentPowerLabel.setVisible(True)
+        # change button label
+        self.powerPipesToggle.setText(self.tr("switch to export pandapipes"))
+
+    def switch(self):
+        if self.power:
+            self.convert_to_pipes()
+        else:
+            self.convert_to_power()
+        self.power = not self.power

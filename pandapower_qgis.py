@@ -31,11 +31,10 @@ import numpy
 # TODO: Write a try for geopandas import and error out without crashing
 
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
-from qgis.PyQt.QtGui import QIcon, QColor
+from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog, QListWidgetItem, QTreeWidgetItem
-from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, QgsVectorLayer, QgsApplication, \
-    QgsGraduatedSymbolRenderer, QgsSingleSymbolRenderer, QgsRendererRange, QgsClassificationRange, \
-    QgsMarkerSymbol, QgsLineSymbol, QgsGradientColorRamp, NULL
+from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, NULL
+from qgis.gui import QgsMessageBar
 
 # Initialize Qt resources from file resources.py
 from .resources import *
@@ -56,19 +55,6 @@ from typing import List
 import warnings
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
-
-# constants for color ramps
-BUS_LOW_COLOR = "#ccff00"  # lime
-BUS_HIGH_COLOR = "#00cc44"  # green
-LINE_LOW_COLOR = "#0000ff"  # blue
-LINE_HIGH_COLOR = "#ff0022"  # red
-
-
-def filter_by_voltage(net, vn_kv, tol=10):
-    buses = set(net.bus.loc[abs(net.bus.vn_kv - vn_kv) <= tol].index)
-    lines = set(net.line.loc[net.line.from_bus.isin(buses) | net.line.to_bus.isin(buses)].index)
-    return buses, lines
-
 
 class ppqgis:
     """QGIS Plugin Implementation."""
@@ -99,7 +85,7 @@ class ppqgis:
 
         # Declare instance attributes
         self.actions = []
-        self.menu = self.tr(u'&pandapower QGis Plugin')
+        self.menu = self.tr(u'&pandapower QGIS Plugin')
 
         # Check if plugin was started the first time in current QGIS session
         # Must be set in initGui() to survive plugin reloads
@@ -257,7 +243,7 @@ class ppqgis:
         """Removes the plugin menu item and icon from QGIS GUI."""
         for action in self.actions:
             self.iface.removePluginMenu(
-                self.tr(u'&pandapower QGis Plugin'),
+                self.tr(u'&pandapower QGIS Plugin'),
                 action)
             self.iface.removeToolBarIcon(action)
 
@@ -271,13 +257,9 @@ class ppqgis:
             amount lines containing errors
             used std_type's
         """
+
+        from .ppqgis_export import power_network, pipes_network
         initial_run = False
-        # variables for summary:
-        bus_count: int = 0
-        line_count: int = 0
-        line_len_count: int = 0
-        line_error_count: int = 0
-        exported_std_types: List[str] = list()
 
         # Create the dialog with elements (after translation) and keep reference
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
@@ -331,475 +313,51 @@ class ppqgis:
         result = self.dlg_export.exec_()
         # See if OK was pressed
         if result:
-            self.installer_func()
-
-            # variables required for new network
-            name = self.dlg_export.nameEdit.text()
-            try:
-                f_hz = float(self.dlg_export.frequencyEdit.text())
-            except ValueError:
-                f_hz = 50
-            try:
-                sn_mva = float(self.dlg_export.refApperentPowerEdit.text())
-            except ValueError:
-                sn_mva = 1
-            add_stdtypes = self.dlg_export.addStdTypes.isChecked()
-
-            import pandapower as pp
-
-            filters = "pandapower networks (*.json)"
-            selected = "pandapower networks (*.json)"
-            file = QFileDialog.getSaveFileName(None, "File Dialog", self.dir, filters, selected)[0]
-            if not file:
-                return
-
-            # create empty network
-            net = pp.create_empty_network(name, f_hz, sn_mva, add_stdtypes)
-
             # get selected layers
             selected_layers = list()
             for ind in range(layer_item.childCount()):
                 if layer_item.child(ind).checkState(0) == QtCore.Qt.CheckState.Checked:
                     selected_layers.append(layer_lookup[ind])
-            # create a bus_lookup table
-            bus_id_lookup = dict()
-            line_layers = list()
-            for layer_name in selected_layers:
-                selectIds = list()
-                layer = layers[layer_name]
-                if not hasattr(layer, "getFeatures"):
-                    continue
-                # get all fields of layer
-                field_names = layer.fields().names()
 
-                features = layer.getFeatures()
-                for feature in features:
-                    if 'pp_type' not in field_names:
-                        selectIds.append(feature.id())
-                        continue
-                    pp_type = feature['pp_type']
-                    if pp_type not in ['bus', 'line']:
-                        selectIds.append(feature.id())
-                        continue
-                    if pp_type == 'bus':
-                        """
-                        Optional properties:
-                            name: str
-                            pp_index: int
-                            vn_kv: float
-                            type: str "b", "n", "m"
-                            zone: str, None
-                            in_service: bool
-                            max_vm_pu: float, NAN
-                            min_vm_pu: float, NAN
-                        """
-                        props = {
-                            "name": None,
-                            "pp_index": None,
-                            # "vn_kv": ?  # no default given.
-                            "geodata": None,
-                            "type": "b",
-                            "zone": None,
-                            "in_service": True,
-                            "max_vm_pu": float("NaN"),
-                            "min_vm_pu": float("NaN"),
-                            "coords": None,
-                        }
-                        # Get optional properties if they exist
-                        for key in props:
-                            if key in field_names and feature[key] is not NULL:
-                                props[key] = feature[key]
-                        if 'vn_kv' in field_names and feature['vn_kv'] is not NULL:
-                            props['vn_kv'] = feature['vn_kv']
-                        else:  # not sure if this is the way to handle missing vn_kv
-                            selectIds.append(feature.id())
-                            continue
+            self.installer_func()
 
-                        geom = feature.geometry()
-                        if geom.type() == QgsWkbTypes.GeometryType.PointGeometry:
-                            assert QgsWkbTypes.isSingleType(geom.wkbType())
-                            geometry = geom.asPoint()
-                            # QgsMessageLog.logMessage("Point: X: " + str(geometry.x()) + ", Y: " + str(geometry.y()),
-                            #                         level=Qgis.MessageLevel.Info)
-                            props['geodata'] = (geometry.x(), geometry.y())
-                        elif geom.type() == QgsWkbTypes.GeometryType.LineGeometry:
-                            assert QgsWkbTypes.isSingleType(geom.wkbType())
-                            geometry = geom.asPolyline()
-                            if len(geometry) > 2:
-                                # bus does not support full LineStrings only start and end points
-                                selectIds.append(feature.id())
-                                continue
-                            props['coords'] = [(geometry[0].x(), geometry[0].y()), (geometry[1].x(), geometry[1].y())]
-                        else:
-                            selectIds.append(feature.id())
-                            continue
-                        try:
-                            bid = pp.create_bus(net,
-                                                name=props['name'],
-                                                index=props['pp_index'],
-                                                vn_kv=props['vn_kv'],
-                                                geodata=props['geodata'],
-                                                type=props['type'],
-                                                zone=props['zone'],
-                                                in_service=props['in_service'],
-                                                max_vm_pu=props['max_vm_pu'],
-                                                min_vm_pu=props['min_vm_pu'],
-                                                coords=props['coords'])
-                        except UserWarning:
-                            bid = pp.create_bus(net,
-                                                name=props['name'],
-                                                index=None,
-                                                vn_kv=props['vn_kv'],
-                                                geodata=props['geodata'],
-                                                type=props['type'],
-                                                zone=props['zone'],
-                                                in_service=props['in_service'],
-                                                max_vm_pu=props['max_vm_pu'],
-                                                min_vm_pu=props['min_vm_pu'],
-                                                coords=props['coords'])
-                        bus_count += 1
-                        if props['pp_index'] not in bus_id_lookup:
-                            bus_id_lookup[props['pp_index']] = bid
-                        else:
-                            QgsMessageLog.logMessage(f'pp_index "{props["pp_index"]}" double assigned! FeatureID: {feature.id()}', level=Qgis.MessageLevel.Warning)
+            if self.dlg_export.power:
+                power_network(self, selected_layers)
+            else:
+                pipes_network(self, selected_layers)
 
-                    if pp_type == 'line' and layer_name not in line_layers:
-                        line_layers.append(layer_name)
-            for layer_name in line_layers:
-                selectIds = list()
-                layer = layers[layer_name]
-                if not hasattr(layer, "getFeatures"):
-                    continue
-                # get all fields of layer
-                field_names = layer.fields().names()
-
-                features = layer.getFeatures()
-                for feature in features:
-                    if 'pp_type' not in field_names:
-                        selectIds.append(feature.id())
-                        continue
-                    pp_type = feature['pp_type']
-                    if pp_type != 'line':
-                        selectIds.append(feature.id())
-                        continue
-                    """
-                    Required properties:
-                        from_bus
-                        to_bus
-                        length_km (if not set derivable from geometry)
-                        std_type (if not a std_type in pp create it: net.create_std_type())
-                    Optional properties:
-                        name: str
-                        index: int
-                        geodata: [tuple]
-                        in_service: bool
-                        df: float (derating factor)
-                        parallel: int
-                        max_loading_percent: float
-                    """
-                    required = {
-                        "from_bus": None,
-                        "to_bus": None,
-                        "std_type": None,
-                    }
-                    optional = {
-                        "length_km": None,  # is required, will be fetched from geometry, thus moved to optional
-                        "name": None,
-                        "pp_index": None,
-                        "geodata": None,
-                        "in_service": True,
-                        "df": 1.0,
-                        "parallel": 1,
-                        "max_loading_percent": float("NaN"),
-                    }
-                    uses_derived_length = False
-                    # Get optional properties if they exist
-                    for key in required:
-                        if key not in field_names or feature[key] == NULL:
-                            selectIds.append(feature.id())
-                            line_error_count += 1
-                            continue
-                        assert key in field_names
-                        assert feature[key] != NULL
-                        required[key] = feature[key]
-
-                    # check if std_type exists in pp
-                    if not pp.std_type_exists(net, required["std_type"]):
-                        # TODO: fill std_type data somehow
-                        #  This data object is only an example and needs replacing!
-                        data = {
-                            "r_ohm_per_km": 0.2,
-                            "x_ohm_per_km": 0.07,
-                            "c_nf_per_km": 1160.0,
-                            "max_i_ka": 0.4,
-                            "endtemp_degree": 70.0,
-                            "r0_ohm_per_km": 0.8,
-                            "x0_ohm_per_km": 0.3,
-                            "c0_nf_per_km": 500.0
-                        }
-                        pp.create_std_type(net, data=data, name=required['std_type'])
-                    # track exported std types
-                    if required['std_type'] not in exported_std_types:
-                        exported_std_types.append(required['std_type'])
-
-                    for key in optional:
-                        if key in field_names and feature[key] != NULL:
-                            optional[key] = feature[key]
-                        # assert optional[key] != NULL  # This assertion fails for None
-                    geom = feature.geometry()
-                    # set length_km if it hadn't been provided
-                    if optional['length_km'] is None:
-                        optional['length_km'] = geom.length()
-                        uses_derived_length = True
-                    if geom.type() == QgsWkbTypes.GeometryType.LineGeometry:
-                        assert QgsWkbTypes.isSingleType(geom.wkbType())
-                        c = geom.asPolyline()  # c = list[QgsPointXY]
-                        # QgsMessageLog.logMessage("Line: " + str(x), level=Qgis.MessageLevel.Info)
-
-                        # lookup from_bus/to_bus
-                        from_bus = None
-                        to_bus = None
-                        if required['from_bus'] in bus_id_lookup:
-                            from_bus = bus_id_lookup[required['from_bus']]
-                        if required['to_bus'] in bus_id_lookup:
-                            to_bus = bus_id_lookup[required['to_bus']]
-
-                        if from_bus is None or to_bus is None:
-                            QgsMessageLog.logMessage(
-                                f'Could not find from_bus {required["from_bus"]} or to_bus {required["to_bus"]} for {feature.id()}',
-                                level=Qgis.MessageLevel.Warning)
-                            selectIds.append(feature.id())
-                            line_error_count += 1
-                            continue
-                        geo = []
-                        for point in c:
-                            geo.append((point.x(), point.y()))
-                        if len(geo) > 0:
-                            optional['geodata'] = geo
-                        try:
-                            pp.create_line(net,
-                                           from_bus=from_bus,
-                                           to_bus=to_bus,
-                                           length_km=optional['length_km'],
-                                           std_type=required['std_type'],
-                                           name=optional['name'],
-                                           index=optional['pp_index'],
-                                           geodata=optional['geodata'],
-                                           in_service=optional['in_service'],
-                                           df=optional['df'],
-                                           parallel=optional['parallel'],
-                                           max_loading_percent=optional['max_loading_percent'])
-                        except UserWarning:
-                            pp.create_line(net,
-                                           from_bus=from_bus,
-                                           to_bus=to_bus,
-                                           length_km=optional['length_km'],
-                                           std_type=required['std_type'],
-                                           name=optional['name'],
-                                           index=None,
-                                           geodata=optional['geodata'],
-                                           in_service=optional['in_service'],
-                                           df=optional['df'],
-                                           parallel=optional['parallel'],
-                                           max_loading_percent=optional['max_loading_percent'])
-
-                        line_count += 1
-                        if uses_derived_length:
-                            line_len_count += 1
-                        # QgsMessageLog.logMessage("Line from {0} to {1}".format(bus_found_first, bus_found_last),
-                        #                         level=Qgis.MessageLevel.Info)
-
-                    layer.selectByIds(selectIds, Qgis.SelectBehavior.AddToSelection)
-
-            if file:
-                pp.to_json(net, file)
-
-            # Display export summary
-            self.dlg_export_summary.exportedBus.setText(f'Buses exported: {bus_count}')
-            self.dlg_export_summary.exportedLines.setText(f'Lines exported: {line_count} ({line_len_count})')
-            self.dlg_export_summary.erroredLines.setText(f'Lines containing errors: {line_error_count}')
-            self.dlg_export_summary.stdTypeList.addItems(exported_std_types)
-            self.dlg_export_summary.show()
 
     def imprt(self):
         """Run method that performs all the real work"""
+        from .ppqgis_import import power_network, pipes_network
+
         # Create the dialog with elements (after translation) and keep reference
         # Only create GUI ONCE in callback, so that it will only load when the plugin is started
         if self.first_start_import:
             self.first_start_import = False
             self.dlg_import = ppImportDialog()
 
-        dlg = QFileDialog()
-        # dlg.setFileMode(QFileDialog.AnyFile)
-        dlg.setNameFilter("pandapower networks (*.json)")
-        dlg.selectNameFilter("pandapower networks (*.json)")
+        # Open file dialog showing json files and directories
+        filters = "all files ();;json files (*.json)"
+        selected = "json files (*.json)"
+        filename = QFileDialog.getOpenFileName(
+            None,
+            self.tr("Import pandapower or pandapipes network - Open File"),
+            self.dir,
+            filters,
+            selected)[0]
 
-        filters = "pandapower networks (*.json)"
-        selected = "pandapower networks (*.json)"
-        file = QFileDialog.getOpenFileName(None, "File Dialog", self.dir, filters, selected)[0]
-        current_crs = int(QgsProject.instance().crs().authid().split(':')[1])
-
-        if file:
+        if filename:
             self.installer_func()
-            import pandapower as pp
-            import geo  # in a future version this should be replaced by pandapower.plotting.geo as geo
-            import geojson
-            net = pp.from_json(file)
 
-            # add voltage levels to all lines
-            pp.add_column_from_node_to_elements(net, 'vn_kv', True, 'line')
-
-            self.dlg_import.BusLabel.setText(self.tr(u'#Bus: ') + str(len(net.bus)))
-            self.dlg_import.LineLabel.setText(self.tr('#Lines: ') + str(len(net.line)))
-            # attempt to set the layer name to the filename and set project crs as default
-            self.dlg_import.layerNameEdit.setText(os.path.basename(file).split('.')[0])
-            self.dlg_import.projectionSelect.setCrs(QgsProject.instance().crs())
-            # show the dialog
-            self.dlg_import.show()
-            # Run the dialog event loop
-            result = self.dlg_import.exec_()
-            # See if OK was pressed
-            if result:
-                folder_name = self.dlg_import.folderSelect.filePath()
-                as_file = True
-                if not folder_name:
-                    as_file = False
-                layer_name = self.dlg_import.layerNameEdit.text()
-                run_pandapower = self.dlg_import.runpp.isChecked()
-                render = self.dlg_import.gradRender.isChecked()
-                try:
-                    crs = int(self.dlg_import.projectionSelect.crs().authid().split(':')[1])
-                except ValueError:
-                    crs = current_crs
-
-                # run pandapower if selected
-                if run_pandapower:
-                    pp.runpp(net)
-
-                root = QgsProject.instance().layerTreeRoot()
-                # check if group exists
-                group = root.findGroup(layer_name)
-                # create group if it does not exist
-                if not group:
-                    group = root.addGroup(layer_name)
-
-                voltage_levels = net.bus.vn_kv.unique()
-                geo.convert_crs(net, epsg_in=crs, epsg_out=current_crs)
-
-                # generate color ramp
-                bus_color_ramp = QgsGradientColorRamp(QColor(BUS_LOW_COLOR), QColor(BUS_HIGH_COLOR))
-                line_color_ramp = QgsGradientColorRamp(QColor(LINE_LOW_COLOR), QColor(LINE_HIGH_COLOR))
-
-                # Color lines by load/ buses by voltage
-                if render:
-                    classification_methode = QgsApplication.classificationMethodRegistry().method("EqualInterval")
-
-                    # generate symbology for bus layer
-                    bus_target = "vm_pu"
-                    min_target = "min_vm_pu"
-                    max_target = "max_vm_pu"
-                    # map value from its possible min/max to 0/100
-                    classification_str = f'scale_linear("{bus_target}", 0.9, 1.1, 0, 100)'
-
-                    bus_renderer = QgsGraduatedSymbolRenderer()
-                    bus_renderer.setClassificationMethod(classification_methode)
-                    bus_renderer.setClassAttribute(classification_str)
-                    # add categories (10 categories, 10% increments)
-                    for x in range(10):
-                        low_bound = x * 10
-                        high_bound = (x + 1) * 10 - .0001
-                        if x == 9:  # fix for not including 100%
-                            high_bound = 100
-                        bus_renderer.addClassRange(
-                            QgsRendererRange(
-                                QgsClassificationRange(f'class {low_bound}-{high_bound}', low_bound, high_bound),
-                                QgsMarkerSymbol()
-                            )
-                        )
-                    bus_renderer.updateColorRamp(bus_color_ramp)
-
-                    # generate symbology for line layer
-                    line_target = "loading_percent"
-
-                    line_renderer = QgsGraduatedSymbolRenderer()
-                    line_renderer.setClassificationMethod(classification_methode)
-                    line_renderer.setClassAttribute(line_target)
-
-                    # add categories (10 categories, 10% increments)
-                    for x in range(10):
-                        low_bound = x * 10
-                        high_bound = (x + 1) * 10 - .0001
-                        if x == 9:  # fix for not including 100%
-                            high_bound = 100
-                        line_symbol = QgsLineSymbol()
-                        line_symbol.setWidth(.6)
-                        line_renderer.addClassRange(
-                            QgsRendererRange(
-                                QgsClassificationRange(f'class {low_bound}-{high_bound}', low_bound, high_bound),
-                                line_symbol
-                            )
-                        )
-                    line_renderer.updateColorRamp(line_color_ramp)
-
-                # find min and max voltage. Used for finding color of symbols.
-                max_kv = max(voltage_levels)
-                min_kv = min(voltage_levels)
-                for vn_kv in voltage_levels:
-                    buses, lines = filter_by_voltage(net, vn_kv)
-
-                    # Color layers by voltage level
-                    if not render:
-                        def map_to_range(x: float, xmin: float, xmax: float, min: float = 0.0, max: float = 1.0):
-                            return (x - xmin) / (xmax - xmin) * (max - min) + min
-
-                        bus_symbol = QgsMarkerSymbol()
-                        bus_renderer = QgsSingleSymbolRenderer(bus_symbol)
-
-                        line_symbol = QgsLineSymbol()
-                        line_symbol.setWidth(.6)
-                        line_renderer = QgsSingleSymbolRenderer(line_symbol)
-                        # set color of symbol based on vn_kv
-                        bus_symbol.setColor(bus_color_ramp.color(map_to_range(vn_kv, min_kv, max_kv)))
-                        line_symbol.setColor(line_color_ramp.color(map_to_range(vn_kv, min_kv, max_kv)))
-
-                    bus = {
-                        'object': buses,
-                        'suffix': 'bus',
-                        'renderer': bus_renderer,
-                    }
-                    line = {
-                        'object': lines,
-                        'suffix': 'line',
-                        'renderer': line_renderer,
-                    }
-
-                    # create bus and line layers if they contain features
-                    for obj in [bus, line]:
-                        # avoid adding empty layer
-                        if not obj['object']:
-                            continue
-                        type_layer_name = f'{layer_name}_{str(vn_kv)}_{obj["suffix"]}'
-                        file_path = f'{folder_name}\\{type_layer_name}.geojson'
-                        gj = geo.dump_to_geojson(net,
-                                                 nodes=obj['object'] if obj['suffix'] == 'bus' else False,
-                                                 branches=obj['object'] if obj['suffix'] == 'line' else False)
-                        if as_file:
-                            with open(file_path, 'w') as file:
-                                file.write(geojson.dumps(gj))
-                                file.close()
-                            layer = QgsVectorLayer(file_path, type_layer_name, "ogr")
-                        else:
-                            layer = QgsVectorLayer(geojson.dumps(gj), type_layer_name, "ogr")
-                        layer.setRenderer(obj['renderer'])
-                        # add layer to group
-                        QgsProject.instance().addMapLayer(layer, False)
-                        group.addLayer(layer)
-
-                    if buses or lines:
-                        # Move layers above TileLayer
-                        root.setHasCustomLayerOrder(True)
-                        order = root.customLayerOrder()
-                        order.insert(0, order.pop())
-                        if buses and lines:
-                            order.insert(0, order.pop())
-                        root.setCustomLayerOrder(order)
+            with open(filename, 'r') as file:
+                content = file.read()
+                if '"pandapowerNet"' in content:
+                    power_network(self, filename)
+                elif '"pandapipesNet"' in content:
+                    pipes_network(self, filename)
+                else:
+                    self.iface.messageBar().pushMessage(
+                        'The selected json file could not be loaded. Could not find "pandapowerNet" or "pandapipesNet"',
+                        level=Qgis.Critical
+                    )
