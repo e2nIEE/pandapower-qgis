@@ -30,7 +30,7 @@
     </message>
     <message>
         <location filename="../pandapower_export_dialog_base.ui" line="80"/>
-        <source>Reference appernt power p.U.:</source>
+        <source>Reference apparent power p.U.:</source>
         <translation></translation>
     </message>
     <message>

@@ -52,8 +52,8 @@ class ppExportDialog(QtWidgets.QDialog, FORM_CLASS):
         self.frequencyLabel.setVisible(False)
         self.frequencyUnitLabel.setVisible(False)
         # set repApHLayout content invisible
-        self.refApperentPowerEdit.setVisible(False)
-        self.refApperentPowerLabel.setVisible(False)
+        self.refApparentPowerEdit.setVisible(False)
+        self.refApparentPowerLabel.setVisible(False)
         # set pipesFluidHLayout content visible
         self.fluidLabel.setVisible(True)
         self.fluidLineEdit.setVisible(True)
@@ -70,8 +70,8 @@ class ppExportDialog(QtWidgets.QDialog, FORM_CLASS):
         self.frequencyLabel.setVisible(True)
         self.frequencyUnitLabel.setVisible(True)
         # set repApHLayout content visible
-        self.refApperentPowerEdit.setVisible(True)
-        self.refApperentPowerLabel.setVisible(True)
+        self.refApparentPowerEdit.setVisible(True)
+        self.refApparentPowerLabel.setVisible(True)
         # change button label
         self.powerPipesToggle.setText(self.tr("switch to export pandapipes"))
 

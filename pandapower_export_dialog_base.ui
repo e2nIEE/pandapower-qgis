@@ -6,7 +6,7 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>400</width>
+    <width>481</width>
     <height>300</height>
    </rect>
   </property>
@@ -75,14 +75,14 @@
      <item>
       <layout class="QHBoxLayout" name="refApHLayout">
        <item>
-        <widget class="QLabel" name="refApperentPowerLabel">
+        <widget class="QLabel" name="refApparentPowerLabel">
          <property name="text">
-          <string>Reference appernt power p.U.:</string>
+          <string>Reference apparent power p.U.:</string>
          </property>
         </widget>
        </item>
        <item>
-        <widget class="QLineEdit" name="refApperentPowerEdit">
+        <widget class="QLineEdit" name="refApparentPowerEdit">
          <property name="text">
           <string notr="true">1</string>
          </property>
