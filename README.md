@@ -21,7 +21,7 @@ Import and export of pandapower and pandapipes networks.
 
 ## pandapower
 
-### import from pandapower ![import icon](./pp_import.svg){: height=1rem}
+### import from pandapower <img alt="import icon" height="1rem" src="./pp_import.svg"/>
 
 The plugin can automatically detect if you are importing a pandapower
 or pandapipes network, it will show only relevant settings.
@@ -92,7 +92,7 @@ It is recommended to select a save folder.
 
 ### export to pandapower
 
-![export icon](./pp_export.svg){: height=1rem}
+<img alt="export icon" height="1rem" src="./pp_export.svg"/>
 
 #### • Name
 This is optional. The name is set when creating the pandapower network
@@ -120,7 +120,7 @@ that have `pp_type` set to `bus` or `line`.
 
 ### import from pandapipes
 
-![import icon](./pp_import.svg){: height=1rem}
+<img alt="import icon" height="1rem" src="./pp_import.svg"/>
 
 The plugin can automatically detect if you are importing a pandapower
 or pandapipes network, it will show only relevant settings.
@@ -198,7 +198,7 @@ It is recommended to select a save folder.
 
 ### export to pandapipes
 
-![export icon](./pp_export.svg){: height=1rem}
+<img alt="export icon" height="1rem" src="./pp_export.svg"/>
 
 #### • Name
 This is optional. The name is set when creating the pandapower network
