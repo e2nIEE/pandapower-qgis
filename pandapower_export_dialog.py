@@ -42,6 +42,7 @@ class ppExportDialog(QtWidgets.QDialog, FORM_CLASS):
         # #widgets-and-dialogs-with-auto-connect
         self.setupUi(self)
         self.power = True
+        self.convert_to_power()
         self.powerPipesToggle.clicked.connect(self.switch)
 
     def convert_to_pipes(self):
