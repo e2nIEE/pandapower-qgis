@@ -5,12 +5,12 @@
 [general]
 name=pandapower QGis Plugin
 qgisMinimumVersion=3.0
-description=Plugin to work with pandapower networks
+description=Plugin to work with pandapower or pandapipes networks
 version=0.1
 author=Fraunhofer IEE
 email=mike.vogt@iee.fraunhofer.de
 
-about=pandapower networks contain geodata, which are often created with qgis. This plugin will allow to work directly with corresponding tables.
+about=pandapower/pandapipes networks contain geodata, which are often created with qgis. This plugin will allow to work directly with corresponding tables.
 
 tracker=https://github.com/e2nIEE/pandapower-qgis/issues
 repository=https://github.com/e2nIEE/pandapower-qgis
@@ -27,7 +27,7 @@ tags=python
 
 homepage=https://github.com/e2nIEE/pandapower-qgis
 category=Plugins
-icon=icon.png
+icon=pp.png
 # experimental flag
 experimental=True
 
