@@ -223,7 +223,7 @@ def pipes_network(parent, file):
     current_crs = int(QgsProject.instance().crs().authid().split(':')[1])
 
     import pandapipes as pp
-    import geo_pipes  # in a future version this should be replaced by pandapower.plotting.geo as geo
+    import geo # in a future version this should be replaced by pandapower.plotting.geo as geo
     import geojson
     net = pp.from_json(file)
 
@@ -264,7 +264,7 @@ def pipes_network(parent, file):
             group = root.addGroup(layer_name)
 
         pressure_levels = net.junction.pn_bar.unique()
-        geo_pipes.convert_crs(net, epsg_in=crs, epsg_out=current_crs)
+        geo.convert_crs(net, epsg_in=crs, epsg_out=current_crs)
 
         # generate color ramp
         junction_color_ramp = QgsGradientColorRamp(QColor(BUS_LOW_COLOR), QColor(BUS_HIGH_COLOR))
@@ -363,7 +363,7 @@ def pipes_network(parent, file):
                     continue
                 type_layer_name = f'{layer_name}_{str(pn_bar)}_{obj["suffix"]}'
                 file_path = f'{folder_name}\\{type_layer_name}.geojson'
-                gj = geo_pipes.dump_to_geojson(net,
+                gj = geo.dump_to_geojson(net,
                                          nodes=obj['object'] if obj['suffix'] == 'junction' else False,
                                          branches=obj['object'] if obj['suffix'] == 'pipe' else False)
                 if as_file:
