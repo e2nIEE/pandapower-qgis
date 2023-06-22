@@ -1,0 +1,6 @@
+pandapower==2.9.0
+pandapipes
+geopandas
+numba
+pyproj
+geojson
