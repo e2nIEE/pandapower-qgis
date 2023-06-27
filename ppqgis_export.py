@@ -158,16 +158,19 @@ def power_network(parent, selected_layers) -> None:
                                         max_vm_pu=props['max_vm_pu'],
                                         min_vm_pu=props['min_vm_pu'],
                                         coords=props['coords'])
+
                 bus_count += 1
+
                 if props['pp_index'] not in bus_id_lookup:
                     bus_id_lookup[props['pp_index']] = bid
                 else:
                     QgsMessageLog.logMessage(
-                        f'pp_index "{props["pp_index"]}" double assigned! FeatureID: {feature.id()}',
+                        f'pp_index "{props["pp_index"]}" double assigned! FeatureID: {feature.id()} to bus_id: {bus_id_lookup[props["pp_index"]]}',
                         level=Qgis.MessageLevel.Warning)
 
             if pp_type == 'line' and layer_name not in line_layers:
                 line_layers.append(layer_name)
+
     for layer_name in line_layers:
         selectIds = list()
         layer = layers[layer_name]
@@ -220,7 +223,7 @@ def power_network(parent, selected_layers) -> None:
             for key in required:
                 if key not in field_names or feature[key] == NULL:
                     selectIds.append(feature.id())
-                    line_error_count += 1
+                    # line_error_count += 1
                     continue
                 assert key in field_names
                 assert feature[key] != NULL
@@ -255,8 +258,11 @@ def power_network(parent, selected_layers) -> None:
                 optional['length_km'] = geom.length()
                 uses_derived_length = True
             if geom.type() == QgsWkbTypes.GeometryType.LineGeometry:
-                assert QgsWkbTypes.isSingleType(geom.wkbType())
-                c = geom.asPolyline()  # c = list[QgsPointXY]
+                # assert QgsWkbTypes.isSingleType(geom.wkbType())
+                try:
+                    c = geom.asPolyline()  # c = list[QgsPointXY]
+                except TypeError:
+                    c = geom.asMultiPolyline()[0]
                 # QgsMessageLog.logMessage("Line: " + str(x), level=Qgis.MessageLevel.Info)
 
                 # lookup from_bus/to_bus
@@ -270,7 +276,7 @@ def power_network(parent, selected_layers) -> None:
                 if from_bus is None or to_bus is None:
                     QgsMessageLog.logMessage(
                         f'Could not find from_bus {required["from_bus"]} or to_bus {required["to_bus"]} for {feature.id()}',
-                        level=Qgis.MessageLevel.Warning)
+                        level=Qgis.MessageLevel.Critical)
                     selectIds.append(feature.id())
                     line_error_count += 1
                     continue
