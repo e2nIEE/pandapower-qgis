@@ -46,7 +46,7 @@ def power_network(parent, selected_layers) -> None:
     except ValueError:
         f_hz = 50
     try:
-        sn_mva = float(parent.dlg_export.refApperentPowerEdit.text())
+        sn_mva = float(parent.dlg_export.refApparentPowerEdit.text())
     except ValueError:
         sn_mva = 1
     add_stdtypes = parent.dlg_export.addStdTypes.isChecked()
