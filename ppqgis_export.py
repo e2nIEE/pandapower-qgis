@@ -46,7 +46,7 @@ def power_network(parent, selected_layers) -> None:
     except ValueError:
         f_hz = 50
     try:
-        sn_mva = float(parent.dlg_export.refApperentPowerEdit.text())
+        sn_mva = float(parent.dlg_export.refApparentPowerEdit.text())
     except ValueError:
         sn_mva = 1
     add_stdtypes = parent.dlg_export.addStdTypes.isChecked()
@@ -255,8 +255,11 @@ def power_network(parent, selected_layers) -> None:
                 optional['length_km'] = geom.length()
                 uses_derived_length = True
             if geom.type() == QgsWkbTypes.GeometryType.LineGeometry:
-                assert QgsWkbTypes.isSingleType(geom.wkbType())
-                c = geom.asPolyline()  # c = list[QgsPointXY]
+                # assert QgsWkbTypes.isSingleType(geom.wkbType())
+                try:
+                    c = geom.asPolyline()  # c = list[QgsPointXY]
+                except TypeError:
+                    c = geom.asMultiPolyline()[0]
                 # QgsMessageLog.logMessage("Line: " + str(x), level=Qgis.MessageLevel.Info)
 
                 # lookup from_bus/to_bus
