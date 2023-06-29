@@ -22,12 +22,13 @@
  ***************************************************************************/
 """
 
-from qgis.PyQt.QtWidgets import QAction, QFileDialog, QListWidgetItem, QTreeWidgetItem
+from qgis.PyQt.QtWidgets import QAction, QFileDialog, QListWidgetItem, QTreeWidgetItem, QPushButton, QDockWidget
 from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, NULL
 
 from typing import List
 
 def power_network(parent, selected_layers) -> None:
+    error_shown = False
 
     # get all layers
     layers = QgsProject.instance().mapLayers()
@@ -255,6 +256,26 @@ def power_network(parent, selected_layers) -> None:
                 optional['length_km'] = geom.length()
                 uses_derived_length = True
             if geom.type() == QgsWkbTypes.GeometryType.LineGeometry:
+                if not QgsWkbTypes.isSingleType(geom.wkbType()):
+                    if not error_shown:
+                        def showMessageLog():
+                            parent.iface.mainWindow().findChild(QDockWidget, 'MessageLog').show()
+                        widget = parent.iface.messageBar().createMessage(
+                            "Incompatible Geometry: ",
+                            f'MultiLineString Geometry cannot be exported. For IDs see MessageLog!'
+                        )
+                        button = QPushButton(widget)
+                        button.setText("Show MessageLog")
+                        button.pressed.connect(showMessageLog)
+                        widget.layout().addWidget(button)
+                        parent.iface.messageBar().pushWidget(widget, Qgis.Warning)
+                        error_shown = True
+                    QgsMessageLog.logMessage(
+                        f'Could not export MultiLineString Geometry for {feature.id()}',
+                        level=Qgis.MessageLevel.Warning)
+                    selectIds.append(feature.id())
+                    line_error_count += 1
+                    continue
                 assert QgsWkbTypes.isSingleType(geom.wkbType())
                 c = geom.asPolyline()  # c = list[QgsPointXY]
                 # QgsMessageLog.logMessage("Line: " + str(x), level=Qgis.MessageLevel.Info)
