@@ -54,7 +54,7 @@ def power_network(parent, file) -> None:
 
     parent.installer_func()
     import pandapower as pp
-    import geo  # in a future version this should be replaced by pandapower.plotting.geo as geo
+    import pandapower.plotting.geo as geo
     import geojson
     net = pp.from_json(file)
 
@@ -223,7 +223,7 @@ def pipes_network(parent, file):
     current_crs = int(QgsProject.instance().crs().authid().split(':')[1])
 
     import pandapipes as pp
-    import geo # in a future version this should be replaced by pandapower.plotting.geo as geo
+    import pandapower.plotting.geo as geo
     import geojson
     net = pp.from_json(file)
 
