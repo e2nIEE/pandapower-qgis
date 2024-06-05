@@ -4,7 +4,7 @@ Your plugin ppqgis was created in:
     E:/git\pandapower_qgis
 
 Your QGIS plugin directory is located at:
-    C:/Users/mvogt/AppData/Roaming/QGIS/QGIS3/profiles/default/python/plugins
+    %AppData%/QGIS/QGIS3/profiles/default/python/plugins
 
 What's Next:
 

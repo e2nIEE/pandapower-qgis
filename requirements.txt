@@ -1,4 +1,4 @@
-pandapower==2.9.0
+pandapower~=2.13
 pandapipes
 geopandas
 numba

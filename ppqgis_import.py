@@ -195,8 +195,8 @@ def power_network(parent, file) -> None:
                 type_layer_name = f'{layer_name}_{str(vn_kv)}_{obj["suffix"]}'
                 file_path = f'{folder_name}\\{type_layer_name}.geojson'
                 gj = geo.dump_to_geojson(net,
-                                         nodes=obj['object'] if obj['suffix'] == 'bus' else False,
-                                         branches=obj['object'] if obj['suffix'] == 'line' else False)
+                                         nodes=list(obj['object']) if obj['suffix'] == 'bus' else False,
+                                         branches=list(obj['object']) if obj['suffix'] == 'line' else False)
                 if as_file:
                     with open(file_path, 'w') as file:
                         file.write(geojson.dumps(gj))
