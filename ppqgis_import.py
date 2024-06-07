@@ -249,6 +249,7 @@ def pipes_network(parent, file):
     import pandapipes as pp
     import pandapower.plotting.geo as geo
     import geojson
+    ppv = pp.__version__
     net = pp.from_json(file)
 
     parent.dlg_import.convert_to_pipes()
@@ -388,8 +389,12 @@ def pipes_network(parent, file):
                     continue
 
                 # check if features have geodata
-                features_with_geo = obj['object'].intersection(net[f'{obj['suffix']}_geodata'].index)
-                features_without_geo = obj['object'].difference(features_with_geo)
+                if int(ppv.split('.')[0]) < 3:
+                    features_with_geo = obj['object'].intersection(net[f'{obj['suffix']}_geodata'].index)
+                    features_without_geo = obj['object'].difference(features_with_geo)
+                else:
+                    features_with_geo = obj['object'].intersection(net[f'{obj['suffix']}'].geo.dropna().index)
+                    features_without_geo = obj['object'].difference(features_with_geo)
 
                 # warn user if some features have no geodata
                 if len(features_without_geo) > 0:
