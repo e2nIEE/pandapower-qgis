@@ -26,7 +26,8 @@ import os.path
 from qgis.PyQt.QtGui import QColor
 from qgis.core import QgsProject, QgsVectorLayer, QgsApplication, \
     QgsGraduatedSymbolRenderer, QgsSingleSymbolRenderer, QgsRendererRange, QgsClassificationRange, \
-    QgsMarkerSymbol, QgsLineSymbol, QgsGradientColorRamp
+    QgsMarkerSymbol, QgsLineSymbol, QgsGradientColorRamp, QgsMessageLog, Qgis
+from qgis.utils import iface
 
 
 # constants for color ramps
@@ -56,6 +57,7 @@ def power_network(parent, file) -> None:
     import pandapower as pp
     import pandapower.plotting.geo as geo
     import geojson
+    ppv = pp.__version__
     net = pp.from_json(file)
 
     # add voltage levels to all lines
@@ -158,6 +160,7 @@ def power_network(parent, file) -> None:
         # find min and max voltage. Used for finding color of symbols.
         max_kv = max(voltage_levels)
         min_kv = min(voltage_levels)
+        layers_added: int = 0
         for vn_kv in voltage_levels:
             buses, lines = filter_by_voltage(net, vn_kv)
 
@@ -192,11 +195,32 @@ def power_network(parent, file) -> None:
                 # avoid adding empty layer
                 if not obj['object']:
                     continue
+
+                # check if features have geodata
+                if int(ppv.split('.')[0]) < 3:
+                    features_with_geo = obj['object'].intersection(net[f'{obj['suffix']}_geodata'].index)
+                    features_without_geo = obj['object'].difference(features_with_geo)
+                else:
+                    features_with_geo = obj['object'].intersection(net[f'{obj['suffix']}'].geo.dropna().index)
+                    features_without_geo = obj['object'].difference(features_with_geo)
+
+                # warn user if some features have no geodata
+                if len(features_without_geo) > 0:
+                    msg = f'{len(features_without_geo)} Features have no geodata and will not be shown. Indices are: {features_without_geo}'
+                    QgsMessageLog.logMessage(msg, level=Qgis.MessageLevel.Warning)
+                    iface.messageBar().pushMessage('Warning', msg, level=Qgis.MessageLevel.Warning)
+
+                # avoid adding layer if all features have no geodata
+                if len(features_with_geo) == 0:
+                    continue
+
+                gj = geo.dump_to_geojson(net,
+                                         nodes=list(features_with_geo) if obj['suffix'] == 'bus' else False,
+                                         branches=list(features_with_geo) if obj['suffix'] == 'line' else False)
+
                 type_layer_name = f'{layer_name}_{str(vn_kv)}_{obj["suffix"]}'
                 file_path = f'{folder_name}\\{type_layer_name}.geojson'
-                gj = geo.dump_to_geojson(net,
-                                         nodes=list(obj['object']) if obj['suffix'] == 'bus' else False,
-                                         branches=list(obj['object']) if obj['suffix'] == 'line' else False)
+
                 if as_file:
                     with open(file_path, 'w') as file:
                         file.write(geojson.dumps(gj))
@@ -208,15 +232,15 @@ def power_network(parent, file) -> None:
                 # add layer to group
                 QgsProject.instance().addMapLayer(layer, False)
                 group.addLayer(layer)
+                layers_added += 1
 
-            if buses or lines:
-                # Move layers above TileLayer
-                root.setHasCustomLayerOrder(True)
-                order = root.customLayerOrder()
+        if layers_added > 0:
+            # Move layers above TileLayer
+            root.setHasCustomLayerOrder(True)
+            order = root.customLayerOrder()
+            for i in range(layers_added):
                 order.insert(0, order.pop())
-                if buses and lines:
-                    order.insert(0, order.pop())
-                root.setCustomLayerOrder(order)
+            root.setCustomLayerOrder(order)
 
 def pipes_network(parent, file):
     # get crs of QGIS project
@@ -327,6 +351,7 @@ def pipes_network(parent, file):
         # find min and max voltage. Used for finding color of symbols.
         max_pressure = max(pressure_levels)
         min_pressure = min(pressure_levels)
+        layers_added: int = 0
         for pn_bar in pressure_levels:
             junctions, pipes = filter_by_pressure(net, pn_bar)
 
@@ -361,11 +386,28 @@ def pipes_network(parent, file):
                 # avoid adding empty layer
                 if not obj['object']:
                     continue
-                type_layer_name = f'{layer_name}_{str(pn_bar)}_{obj["suffix"]}'
-                file_path = f'{folder_name}\\{type_layer_name}.geojson'
+
+                # check if features have geodata
+                features_with_geo = obj['object'].intersection(net[f'{obj['suffix']}_geodata'].index)
+                features_without_geo = obj['object'].difference(features_with_geo)
+
+                # warn user if some features have no geodata
+                if len(features_without_geo) > 0:
+                    msg = f'{len(features_without_geo)} Features have no geodata and will not be shown. Indices are: {features_without_geo}'
+                    QgsMessageLog.logMessage(msg, level=Qgis.MessageLevel.Warning)
+                    iface.messageBar().pushMessage('Warning', msg, level=Qgis.MessageLevel.Warning)
+
+                # avoid adding layer if all features have no geodata
+                if len(features_with_geo) == 0:
+                    continue
+
                 gj = geo.dump_to_geojson(net,
                                          nodes=obj['object'] if obj['suffix'] == 'junction' else False,
                                          branches=obj['object'] if obj['suffix'] == 'pipe' else False)
+
+                type_layer_name = f'{layer_name}_{str(pn_bar)}_{obj["suffix"]}'
+                file_path = f'{folder_name}\\{type_layer_name}.geojson'
+
                 if as_file:
                     with open(file_path, 'w') as file:
                         file.write(geojson.dumps(gj))
@@ -377,12 +419,12 @@ def pipes_network(parent, file):
                 # add layer to group
                 QgsProject.instance().addMapLayer(layer, False)
                 group.addLayer(layer)
+                layers_added += 1
 
-            if junctions or pipes:
-                # Move layers above TileLayer
-                root.setHasCustomLayerOrder(True)
-                order = root.customLayerOrder()
+        if layers_added > 0:
+            # Move layers above TileLayer
+            root.setHasCustomLayerOrder(True)
+            order = root.customLayerOrder()
+            for i in range(layers_added):
                 order.insert(0, order.pop())
-                if junctions and pipes:
-                    order.insert(0, order.pop())
-                root.setCustomLayerOrder(order)
+            root.setCustomLayerOrder(order)
