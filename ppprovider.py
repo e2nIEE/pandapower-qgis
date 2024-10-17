@@ -84,6 +84,7 @@ class PandapowerProvider(QgsVectorDataProvider):
         self.populate_features()
 
     def populate_features(self):
+        df = getattr(self.net, self.network_type)
         features = []
 
         # Populate features
@@ -98,12 +99,18 @@ class PandapowerProvider(QgsVectorDataProvider):
                 feature.setGeometry(
                     QgsGeometry.fromPointXY(QgsPoint(geo_data['coordinates'][0], geo_data['coordinates'][1])))
             elif self.network_type in ['line', 'pipe']:
-                from_geo = row['from_geo']
-                to_geo = row['to_geo']
-                feature.setGeometry(QgsGeometry.fromPolylineXY([
-                    QgsPoint(from_geo['coordinates'][0], from_geo['coordinates'][1]),
-                    QgsPoint(to_geo['coordinates'][0], to_geo['coordinates'][1])
-                ]))
+                geo_data = row.get('geo', '{}')
+                if isinstance(geo_data, str):
+                    geo_data = json.loads(geo_data)
+                coordinates = geo_data.get('coordinates', [])
+                if isinstance(coordinates, str):
+                    coordinates = json.loads(coordinates)
+                coordinates = df['geo']['coordinates']
+                # Turn Coord into QgsPoint Object
+                points = [QgsPoint(coord[0], coord[1]) for coord in coordinates]
+                # Create QgsLineString Object
+                linestring = QgsLineString(points)
+                feature.setGeometry(QgsGeometry(linestring))
 
             # Collect attributes dynamically
             attributes = []
@@ -118,8 +125,6 @@ class PandapowerProvider(QgsVectorDataProvider):
             features.append(feature)
 
         self.layer.addFeatures(features)
-            ########################################################### 수정할것
-            ##### need? oder doppeltarbeit? populatefeature selbst ist adding features
         self.update_layer()
 
     def update_pandapower_net(self):  # tmp idea
@@ -152,7 +157,7 @@ class PandapowerProvider(QgsVectorDataProvider):
         if self.network_type == 'bus' or self.network_type == 'junction':
             return QgsWkbTypes.Point
         elif self.network_type == 'line' or self.network_type == 'pipe':
-            return QgsWkbTypes.Line
+            return QgsWkbTypes.LineString
 
     def featureCount(self):
         """
@@ -234,7 +239,13 @@ class PandapowerProvider(QgsVectorDataProvider):
                     # Use pandapower API to create a bus with dynamic attributes
                     pp.create_bus(self.net, **attributes)
                 elif self.network_type == 'line':
-                    pass
+                    # Ensure that required attributes are present
+                    required_attrs = ['from_bus', 'to_bus', 'length_km', 'std_type']
+                    for attr in required_attrs:
+                        if attr not in attributes:
+                            raise ValueError(f"Missing required attribute '{attr}' for line")
+                    # Use pandapower API to create a line with dynamic attributes
+                    pp.create_line(self.net, **attributes)
                 else:
                     raise ValueError(f"Unsupported network_type '{self.network_type}'")
 
@@ -261,9 +272,9 @@ class PandapowerProvider(QgsVectorDataProvider):
                     pp.drop_buses(self.net, feature_id)
                 elif self.network_type == 'line':
                     pp.drop_lines(self.net, feature_id)
-                #elif self.network_type == 'junction':
+                # elif self.network_type == 'junction':
                 #    pp.drop_junctions(self.net, feature_id)
-                #elif self.network_type == 'pipe':
+                # elif self.network_type == 'pipe':
                 #    pp.drop_pipes(self.net, feature_id)
                 else:
                     raise ValueError(f"Unsupported network_type '{self.network_type}'")
@@ -311,23 +322,20 @@ class PandapowerProvider(QgsVectorDataProvider):
         :return: True if geometries were changed successfully, False otherwise.
         :rtype: bool
         """
-        try
+        try:
             # Start an edit session
             self.layer.startEditing()
 
             for feature_id, new_geometry in geometry_map.items():
-                # 변경된 지오메트리를 판다파워에 반영
-                new_geo_value = [new_geometry.asPoint().x(), new_geometry.asPoint().y()]
-                self.net.bus.at[feature_id, 'geo'] = new_geo_value
+                # Apply changed geometry to pandapower network
+                if self.network_type in ['bus', 'junction']:
+                    new_geo_value = [new_geometry.asPoint().x(), new_geometry.asPoint().y()]
+                    self.net.bus.at[feature_id, 'geo'] = new_geo_value
+                elif self.network_type in ['line', 'pipe']:
+                    new_geo_value = [[point.x(), point.y()] for point in new_geometry.asPolyline()]
+                    self.net.line.at[feature_id, 'geo'] = new_geo_value
 
-                '''
-                # 변경된 지오메트리를 벡터 레이어에 반영
-                feature = QgsFeature()
-                if self.layer.getFeatures(QgsFeatureRequest(feature_id)).nextFeature(feature):
-                    feature.setGeometry(new_geometry)
-                    # 벡터 레이어의 피처 지오메트리 업데이트
-                    self.layer.updateFeature(feature) ##############작성할 것'''
-                # 변경된 지오메트리를 벡터 레이어에 반영
+                # Apply changed geometry to vector layer
                 self.layer.changeGeometry(feature_id, new_geometry)
 
             # Commit the changes
@@ -418,10 +426,6 @@ class PandapowerProvider(QgsVectorDataProvider):
 
     def renameAttributes(self):
         pass
-
-
-
-
 
 
 
