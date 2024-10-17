@@ -209,29 +209,6 @@ class PandapowerProvider(QgsVectorDataProvider):
         :return: True if features were added successfully, False otherwise.
         :rtype: bool
         """
-        """
-        try:
-            # Add features to Pandapower dataframe
-            df = getattr(self.net, self.network_type)
-
-            # Validation of Field Structure for Added Features
-            for feature in feature_list:
-                if feature.fields().names() != [field.name() for field in self.fields_list]:
-                    raise ValueError("Feature fields do not match the existing fields list")
-
-            # Add feature to pandapower dataframe
-            for feature in feature_list:
-                new_row = {}
-                # Save attribute to field of new row
-                for i, field in enumerate(self.fields_list):
-                    new_row[field.name()] = feature.attribute(i)
-                df = df.append(new_row, ignore_index=True)
-
-            self.update_layer()
-            return True
-        except Exception as e:
-            self.pushError(f"Failed to add features: {str(e)}")
-            return False"""
         try:
             for feature in feature_list:
                 # Validate that the feature fields match the existing fields list
@@ -261,6 +238,7 @@ class PandapowerProvider(QgsVectorDataProvider):
                 else:
                     raise ValueError(f"Unsupported network_type '{self.network_type}'")
 
+            self.layer.addFeatures(feature_list)
             self.update_layer()
             return True
         except Exception as e:
@@ -277,11 +255,19 @@ class PandapowerProvider(QgsVectorDataProvider):
         :rtype: bool
         """
         try:
-            df = getattr(self.net, self.network_type)
-
-            # 삭제할 피처의 ID 리스트를 반복하면서 데이터프레임에서 삭제
+            # Pandapower 네트워크에서 피처 삭제
             for feature_id in ids:
-                df = df.drop(feature_id)  # inplace=True, then data removed from original df. Default returns new df
+                if self.network_type == 'bus':
+                    pp.drop_buses(self.net, feature_id)
+                elif self.network_type == 'line':
+                    pp.drop_lines(self.net, feature_id)
+                #elif self.network_type == 'junction':
+                #    pp.drop_junctions(self.net, feature_id)
+                #elif self.network_type == 'pipe':
+                #    pp.drop_pipes(self.net, feature_id)
+                else:
+                    raise ValueError(f"Unsupported network_type '{self.network_type}'")
+            self.layer.deleteFeatues(ids)   # commitChanges 함수 ???
             self.update_layer()
             return True
         except Exception as e:
@@ -306,6 +292,8 @@ class PandapowerProvider(QgsVectorDataProvider):
                     field_name = self.fields_list[attr_index].name()
                     df.at[feature_id, field_name] = new_value
 
+            # Change attribute values in the QGIS layer
+            self.layer.dataProvider().changeAttributeValues(attr_map)
             self.update_layer()
             return True
         except Exception as e:
@@ -323,35 +311,27 @@ class PandapowerProvider(QgsVectorDataProvider):
         :return: True if geometries were changed successfully, False otherwise.
         :rtype: bool
         """
-        try:
-            '''
-            df = getattr(self.net, self.network_type)
+        try
+            # Start an edit session
+            self.layer.startEditing()
 
-            # Convert new geometry value as pandapower dataframe format and save it
             for feature_id, new_geometry in geometry_map.items():
-                if self.network_type in ['bus', 'junction']:
-                    df.at[feature_id, 'geo'] = json.dumps({
-                        'type': 'Point',
-                        'coordinates': [new_geometry.asPoint().x(), new_geometry.asPoint().y()]
-                    })
-                elif self.network_type in ['line', 'pipe']:
-                    df.at[feature_id, 'from_geo'] = json.dumps({
-                        'type': 'Point',
-                        'coordinates': [new_geometry.asPolyline()[0].x(), new_geometry.asPolyline()[0].y()]
-                    })
-                    df.at[feature_id, 'to_geo'] = json.dumps({
-                        'type': 'Point',
-                        'coordinates': [new_geometry.asPolyline()[-1].x(), new_geometry.asPolyline()[-1].y()]
-                    })'''
+                # 변경된 지오메트리를 판다파워에 반영
+                new_geo_value = [new_geometry.asPoint().x(), new_geometry.asPoint().y()]
+                self.net.bus.at[feature_id, 'geo'] = new_geo_value
 
-            # 변경된 지오메트리를 벡터 레이어에 반영
-            for feature_id, new_geometry in geometry_map.items():
-                # 벡터 레이어의 피처 지오메트리 업데이트
+                '''
+                # 변경된 지오메트리를 벡터 레이어에 반영
                 feature = QgsFeature()
                 if self.layer.getFeatures(QgsFeatureRequest(feature_id)).nextFeature(feature):
                     feature.setGeometry(new_geometry)
-                    self.layer.updateFeature(feature) ##############작성할 것
+                    # 벡터 레이어의 피처 지오메트리 업데이트
+                    self.layer.updateFeature(feature) ##############작성할 것'''
+                # 변경된 지오메트리를 벡터 레이어에 반영
+                self.layer.changeGeometry(feature_id, new_geometry)
 
+            # Commit the changes
+            self.layer.commitChanges()
             self.update_layer()
             return True
         except Exception as e:
@@ -391,9 +371,16 @@ class PandapowerProvider(QgsVectorDataProvider):
         :rtype: bool
         """
         try:
-            # Add attributes to the internal fields list
+            df = getattr(self.net, self.network_type)
+
             for attribute in attributes:
+                # add to fields_list of instance
                 self.fields_list.append(attribute)
+                # add to pandapower
+                df[attribute.name()] = pd.Series(dtype=attribute.typeName())
+                # add to layer
+                self.layer.addAttribute(attribute)
+
             self.layer.updateFields()
             return success
         except Exception as e:
