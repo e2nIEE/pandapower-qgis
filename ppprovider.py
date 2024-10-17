@@ -382,7 +382,7 @@ class PandapowerProvider(QgsVectorDataProvider):
                 self.layer.addAttribute(attribute)
 
             self.layer.updateFields()
-            return success
+            return True
         except Exception as e:
             self.pushError(f"Failed to add attributes: {str(e)}")
             return False
@@ -397,11 +397,21 @@ class PandapowerProvider(QgsVectorDataProvider):
         :rtype: bool
         """
         try:
-            # Delete attributes from the layer's data provider
-            success = self.layer.dataProvider().deleteAttributes(attributesIds)
-            if success:
-                self.layer.updateFields()
-            return success
+            df = getattr(self.net, self.network_type)
+
+            # Delete attributes from the internal fields list and the pandas DataFrame
+            for attr_id in attributesIds:
+                attr_name = self.fields_list[attr_id].name()
+
+                # delete from fields_list of instance
+                self.fields_list.remove(self.fields_list[attr_id])
+                # delete from pandapower
+                df.drop(columns=[attr_name], inplace=True)
+                # delete from layer
+                self.layer.deleteAttribute(attr_id)
+
+            self.layer.updateFields()
+            return True
         except Exception as e:
             self.pushError(f"Failed to delete attributes: {str(e)}")
             return False
