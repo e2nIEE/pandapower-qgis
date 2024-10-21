@@ -24,12 +24,26 @@ import pandas as pd
 import pandapower as pp
 
 
-class PandapowerFeatureSource(QgsFeatureSource):
+class PandapowerFeatureSource(QgsAbstractFeatureSource):
     def __init__(self, provider):
+        super().__init__()
         self.provider = provider
+
+    def getFeatures(self, request):
+        # 여기서 PandapowerProvider의 데이터를 사용하여 피처를 생성하고 반환합니다.
+        # 이 예제에서는 PandapowerProvider의 getFeatures 메소드를 호출합니다.
+        return self.provider.getFeatures(request)
 
 
 def convert_dtype_to_qvariant(dtype):
+    """
+    Converts a pandas data type (dtype) to a corresponding Qt data type (QVariant).
+
+    :param dtype: The pandas data type to convert.
+    :type dtype: pandas dtype
+    :return: The corresponding QVariant type.
+    :rtype: QVariant
+    """
     if pd.api.types.is_integer_dtype(dtype):
         return QVariant.Int
     elif pd.api.types.is_unsigned_integer_dtype(dtype):
@@ -63,11 +77,13 @@ class PandapowerProvider(QgsVectorDataProvider):
         self.fields_list = QgsFields()
         self.current_crs = current_crs if current_crs else "EPSG:4326"
         self.crs = self.sourceCrs()
-        # self.non_vector_data = {}
 
         self.create_layers()
 
     def create_layers(self):
+        """
+        Create a QgsVectorLayer and generate fields from pandapower network.
+        """
         # get a pandapower dataframe of a specific network type
         df = getattr(self.net, self.network_type)
 
@@ -78,12 +94,20 @@ class PandapowerProvider(QgsVectorDataProvider):
             self.fields_list.append(QgsField(column, qv))
 
         self.layer = QgsVectorLayer(f"Point?crs={self.crs.authid()}", self.network_type, "memory")
-        self.layer.addAttributes(self.fields_list)
-        self.layer.updateFields()  # check updateFields() of parent
 
+        self.layer.startEditing()
+        self.layer.addAttributes(self.fields_list)
+        self.layer.commitChanges()
+
+        self.layer.updateFields()  # check updateFields() of parent
         self.populate_features()
 
     def populate_features(self):
+        """
+        Populates the QgsVectorLayer with features from pandapower network.
+        This function iterates over the rows of the Pandapower DataFrame, creates a QgsFeature for each row,
+        sets the feature's geometry and attributes based on the row data, and adds the feature to the QgsVectorLayer.
+        """
         df = getattr(self.net, self.network_type)
         features = []
 
@@ -127,25 +151,13 @@ class PandapowerProvider(QgsVectorDataProvider):
         self.layer.addFeatures(features)
         self.update_layer()
 
-    def update_pandapower_net(self):  # tmp idea
-        bus_layer = self.layers["buses"]
-        for feature in bus_layer.getFeatures():
-            idx = feature.id()
-            self.net.bus.at[idx, 'name'] = feature['name']
-            self.net.bus.at[idx, 'vn_kv'] = feature['vn_kv']
-            self.net.bus.at[idx, 'type'] = feature['type']
-            self.net.bus.at[idx, 'zone'] = feature['zone']
-            self.net.bus.at[idx, 'in_service'] = feature['in_service']
-            self.net.bus.at[idx, 'geo'] = feature['geo']
-            # Restore non-vector data
-            for key, value in self.non_vector_data[f"bus {idx}"].items():
-                self.net.bus.at[idx, key] = value
-
     def featureSource(self):
         return PandapowerFeatureSource(self)
 
-    # Returns the permanent storage type for this layer as a friendly name.
     def storageType(self):
+        """
+        Returns the permanent storage type for this layer as a friendly name.
+        """
         return f"{self.network_type} layer is Pandapower Network in json format"
 
     # filter with id and type? no... it returns feature"s"  iterator
@@ -162,6 +174,7 @@ class PandapowerProvider(QgsVectorDataProvider):
     def featureCount(self):
         """
         Returns the number of features in the provider.
+
         :return: Number of features.
         :rtype: int
         """
@@ -197,11 +210,21 @@ class PandapowerProvider(QgsVectorDataProvider):
 
     def update_layer_from_changed_dataframe(self):
         """
-        데이터프레임의 변경사항을 벡터 레이어에 반영합니다.
-        :param provider: PandapowerProvider 객체
+        Updates the vector layer to reflect changes in the DataFrame.
         """
-        self.populate_features()  # 피처를 다시 생성하여 벡터 레이어에 추가
-        # 그럼 그냥 populate만 호출하면 되는 거아님? 굳이 함수로? 그런데 populate 너무 과도한 거 아님?
+        pass
+
+    def update_pandapower_net(self):
+        """
+        Update Pandapower Net based on current QGIS Layer.
+        Compare to changeAttributeValues, it is not for direct change,
+        it updates all changes. (written just in case)
+        """
+        for feature in self.layer.getFeatures():
+            idx = feature.id()
+            for field in self.fields():
+                field_name = field.name()
+                getattr(self.net, self.network_type).at[idx, field_name] = feature[field_name]
 
     def addFeatures(self, feature_list, flags=QgsFeatureSink.Flags()):
         """
@@ -266,7 +289,9 @@ class PandapowerProvider(QgsVectorDataProvider):
         :rtype: bool
         """
         try:
-            # Pandapower 네트워크에서 피처 삭제
+            self.layer.startEditing()
+
+            # Delete features from the Pandapower network
             for feature_id in ids:
                 if self.network_type == 'bus':
                     pp.drop_buses(self.net, feature_id)
@@ -278,7 +303,10 @@ class PandapowerProvider(QgsVectorDataProvider):
                 #    pp.drop_pipes(self.net, feature_id)
                 else:
                     raise ValueError(f"Unsupported network_type '{self.network_type}'")
-            self.layer.deleteFeatues(ids)   # commitChanges 함수 ???
+            # Delete features from the QGIS layer
+            self.layer.deleteFeatues(ids)
+
+            self.layer.commitChanges()
             self.update_layer()
             return True
         except Exception as e:
@@ -323,7 +351,6 @@ class PandapowerProvider(QgsVectorDataProvider):
         :rtype: bool
         """
         try:
-            # Start an edit session
             self.layer.startEditing()
 
             for feature_id, new_geometry in geometry_map.items():
@@ -338,7 +365,6 @@ class PandapowerProvider(QgsVectorDataProvider):
                 # Apply changed geometry to vector layer
                 self.layer.changeGeometry(feature_id, new_geometry)
 
-            # Commit the changes
             self.layer.commitChanges()
             self.update_layer()
             return True
@@ -362,7 +388,6 @@ class PandapowerProvider(QgsVectorDataProvider):
         try:
             attr_success = self.changeAttributeValues(attr_map)
             geom_success = self.changeGeometryValues(geometry_map)
-            # Check if both operations were successful
             success = attr_success and geom_success
             return success
         except Exception as e:
@@ -380,6 +405,7 @@ class PandapowerProvider(QgsVectorDataProvider):
         """
         try:
             df = getattr(self.net, self.network_type)
+            self.layer.startEditing()
 
             for attribute in attributes:
                 # add to fields_list of instance
@@ -389,6 +415,7 @@ class PandapowerProvider(QgsVectorDataProvider):
                 # add to layer
                 self.layer.addAttribute(attribute)
 
+            self.layer.commitChanges()
             self.layer.updateFields()
             return True
         except Exception as e:
@@ -406,6 +433,7 @@ class PandapowerProvider(QgsVectorDataProvider):
         """
         try:
             df = getattr(self.net, self.network_type)
+            self.layer.startEditing()
 
             # Delete attributes from the internal fields list and the pandas DataFrame
             for attr_id in attributesIds:
@@ -418,6 +446,7 @@ class PandapowerProvider(QgsVectorDataProvider):
                 # delete from layer
                 self.layer.deleteAttribute(attr_id)
 
+            self.layer.commitChanges()
             self.layer.updateFields()
             return True
         except Exception as e:
