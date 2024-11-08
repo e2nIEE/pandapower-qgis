@@ -28,6 +28,7 @@ from qgis.core import QgsProject, QgsVectorLayer, QgsApplication, \
     QgsGraduatedSymbolRenderer, QgsSingleSymbolRenderer, QgsRendererRange, QgsClassificationRange, \
     QgsMarkerSymbol, QgsLineSymbol, QgsGradientColorRamp
 
+from .ppprovider import PandapowerProvider
 
 # constants for color ramps
 BUS_LOW_COLOR = "#ccff00"  # lime
@@ -186,7 +187,7 @@ def power_network(parent, file) -> None:
                 'suffix': 'line',
                 'renderer': line_renderer,
             }
-
+            print('checkpoint in ppimport')
             # create bus and line layers if they contain features
             for obj in [bus, line]:
                 # avoid adding empty layer
@@ -194,6 +195,7 @@ def power_network(parent, file) -> None:
                     continue
                 type_layer_name = f'{layer_name}_{str(vn_kv)}_{obj["suffix"]}'
                 file_path = f'{folder_name}\\{type_layer_name}.geojson'
+                '''
                 gj = geo.dump_to_geojson(net,
                                          nodes=obj['object'] if obj['suffix'] == 'bus' else False,
                                          branches=obj['object'] if obj['suffix'] == 'line' else False)
@@ -204,6 +206,9 @@ def power_network(parent, file) -> None:
                     layer = QgsVectorLayer(file_path, type_layer_name, "ogr")
                 else:
                     layer = QgsVectorLayer(geojson.dumps(gj), type_layer_name, "ogr")
+                    '''
+                provider = PandapowerProvider(net, network_type=obj['suffix'], current_crs=current_crs) #
+                layer = provider.layer #
                 layer.setRenderer(obj['renderer'])
                 # add layer to group
                 QgsProject.instance().addMapLayer(layer, False)

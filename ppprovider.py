@@ -15,10 +15,15 @@ pandapower 객체의 데이터를 읽어 QGIS 피처로 변환합니다.
 
 # overwrite qgis.core.QgsVectorDataProvider.h
 
+# print("Before settrace")
+# import pydevd_pycharm
+# pydevd_pycharm.settrace('127.0.0.1', port=53100, stdoutToServer=True, stderrToServer=True)
+
 from qgis.core import QgsVectorDataProvider, QgsVectorLayer, QgsFeature, QgsField, QgsFields, \
-    QgsGeometry, QgsPoint, QgsLineString, QgsWkbTypes, QgsProject, QgsCoordinateReferenceSystem, \
-    QgsFeatureRequest, QgsFeatureIterator, QgsFeatureSource
-from qgis.PyQt.QtCore import QVariant
+    QgsGeometry, QgsPointXY, QgsLineString, QgsWkbTypes, QgsProject, QgsCoordinateReferenceSystem, \
+    QgsFeatureRequest, QgsFeatureIterator, QgsFeatureSource, QgsAbstractFeatureSource, QgsFeatureSink, \
+    QgsDataProvider
+from qgis.PyQt.QtCore import QMetaType
 import json
 import pandas as pd
 import pandapower as pp
@@ -35,27 +40,29 @@ class PandapowerFeatureSource(QgsAbstractFeatureSource):
         return self.provider.getFeatures(request)
 
 
-def convert_dtype_to_qvariant(dtype):
+def convert_dtype_to_qmetatype(dtype):
     """
-    Converts a pandas data type (dtype) to a corresponding Qt data type (QVariant).
+    Converts a pandas data type (dtype) to a corresponding Qt data type (QMetatype).
 
     :param dtype: The pandas data type to convert.
     :type dtype: pandas dtype
-    :return: The corresponding QVariant type.
-    :rtype: QVariant
+    :return: The corresponding QMetaType type.
+    :rtype: QMetaType
     """
     if pd.api.types.is_integer_dtype(dtype):
-        return QVariant.Int
+        return QMetaType.Int
     elif pd.api.types.is_unsigned_integer_dtype(dtype):
-        return QVariant.UInt
+        return QMetaType.UInt
     elif pd.api.types.is_float_dtype(dtype):
-        return QVariant.Double
+        return QMetaType.Double
     elif pd.api.types.is_bool_dtype(dtype):
-        return QVariant.Bool
+        return QMetaType.Bool
     elif pd.api.types.is_string_dtype(dtype):
-        return QVariant.String
+        return QMetaType.QString
     elif pd.api.types.is_object_dtype(dtype):   # object is string?
-        return QVariant.String
+        return QMetaType.QString
+    elif pd.api.types.is_datetime64_any_dtype(dtype):
+        return QMetaType.QDateTime
     else:
         print("Unexpected dtype detected. Add it or check if it is not available.")
         return QVariant.Invalid
@@ -84,19 +91,29 @@ class PandapowerProvider(QgsVectorDataProvider):
         """
         Create a QgsVectorLayer and generate fields from pandapower network.
         """
+        print(f"Creating layer for network type: {self.network_type}")  # 디버깅 출력
+
         # get a pandapower dataframe of a specific network type
         df = getattr(self.net, self.network_type)
+
+        # Check if dataframe is empty
+        if df.empty:
+            print(f"No data available for network type: {self.network_type}, called in create_layers")  # 디버깅 출력
+            return
 
         # generate fields_list dynamically from column of the dataframe
         for column in df.columns:
             dt = df[column].dtype
-            qv = convert_dtype_to_qvariant(dt)
-            self.fields_list.append(QgsField(column, qv))
+            qm = convert_dtype_to_qmetatype(dt)
+            self.fields_list.append(QgsField(column, qm))
 
         self.layer = QgsVectorLayer(f"Point?crs={self.crs.authid()}", self.network_type, "memory")
 
+        # add fields(attribute fields) to layer
         self.layer.startEditing()
-        self.layer.addAttributes(self.fields_list)
+        for field in self.fields_list:
+            if not self.layer.addAttribute(field):
+                raise RuntimeError(f"Failed to add attribute: {field.name()}")
         self.layer.commitChanges()
 
         self.layer.updateFields()  # check updateFields() of parent
@@ -111,8 +128,11 @@ class PandapowerProvider(QgsVectorDataProvider):
         df = getattr(self.net, self.network_type)
         features = []
 
+        print(f"Populating features for network type: {self.network_type}")  # 디버깅 출력
+        print(f"Number of rows in dataframe: {len(df)}")  # 디버깅 출력
+
         # Populate features
-        for idx, row in getattr(self.net, self.network_type).iterrows():
+        for idx, row in df.iterrows():
             feature = QgsFeature()
 
             # Set geometry based on network type
@@ -120,18 +140,16 @@ class PandapowerProvider(QgsVectorDataProvider):
                 geo_data = row.get('geo', '{}')
                 if isinstance(geo_data, str):
                     geo_data = json.loads(geo_data)
+                coordinates = geo_data.get('coordinates', [0, 0])
                 feature.setGeometry(
-                    QgsGeometry.fromPointXY(QgsPoint(geo_data['coordinates'][0], geo_data['coordinates'][1])))
+                    QgsGeometry.fromPointXY(QgsPointXY(coordinates[0], coordinates[1])))
             elif self.network_type in ['line', 'pipe']:
                 geo_data = row.get('geo', '{}')
                 if isinstance(geo_data, str):
                     geo_data = json.loads(geo_data)
                 coordinates = geo_data.get('coordinates', [])
-                if isinstance(coordinates, str):
-                    coordinates = json.loads(coordinates)
-                coordinates = df['geo']['coordinates']
                 # Turn Coord into QgsPoint Object
-                points = [QgsPoint(coord[0], coord[1]) for coord in coordinates]
+                points = [QgsPointXY(coord[0], coord[1]) for coord in coordinates]
                 # Create QgsLineString Object
                 linestring = QgsLineString(points)
                 feature.setGeometry(QgsGeometry(linestring))
@@ -147,6 +165,8 @@ class PandapowerProvider(QgsVectorDataProvider):
 
             feature.setAttributes(attributes)
             features.append(feature)
+
+        print(f"Number of features created: {len(features)}")  # 디버깅 출력
 
         self.layer.addFeatures(features)
         self.update_layer()
@@ -195,7 +215,10 @@ class PandapowerProvider(QgsVectorDataProvider):
 
     # vllt unnötig?
     def sourceCrs(self):
-        return QgsCoordinateReferenceSystem(self.current_crs)
+        crs = QgsCoordinateReferenceSystem.fromEpsgId(self.current_crs)
+        if not crs.isValid():
+            raise ValueError(f"CRS ID {self.current_crs} is not valid.")
+        return crs
 
     @staticmethod
     def get_provider_name():
@@ -456,9 +479,9 @@ class PandapowerProvider(QgsVectorDataProvider):
     def renameAttributes(self):
         pass
 
+print('Ende des ppprovider')
 
-
-
+'''
 # Usage example:
 net = pp.from_json("path_to_your_file.json")
 
@@ -476,3 +499,4 @@ provider.update_non_vector_data('bus 0', 'new_key', 'new_value')
 
 # Update pandapower net with changes made in QGIS
 provider.update_pandapower_net()  ##### pandapower 네트워크 업데이트
+'''
