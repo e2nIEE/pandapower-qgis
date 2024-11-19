@@ -65,11 +65,11 @@ def convert_dtype_to_qmetatype(dtype):
         return QMetaType.QDateTime
     else:
         print("Unexpected dtype detected. Add it or check if it is not available.")
-        return QVariant.Invalid
+        return QMetaType.Invalid
 
 
 class PandapowerProvider(QgsVectorDataProvider):
-    def __init__(self, net, network_type, current_crs=False, uri=None):
+    def __init__(self, net, type_layer_name, network_type, current_crs, uri=None):
         # Call the constructor of the parent class # optional
         self.uri = uri
         providerOptions = QgsDataProvider.ProviderOptions()
@@ -77,46 +77,115 @@ class PandapowerProvider(QgsVectorDataProvider):
         super().__init__(self.uri, providerOptions, flags)
 
         self.net = net
+        self.type_layer_name = type_layer_name
         if network_type not in ['bus', 'line', 'junction', 'pipe']:
             raise ValueError("Invalid network_type. Expected 'bus', 'line', 'junction', 'pipe'.")  # necessary?
         self.network_type = network_type
         self.layer = None
         self.fields_list = QgsFields()
-        self.current_crs = current_crs if current_crs else "EPSG:4326"
+        self.current_crs = current_crs if current_crs else 4326
         self.crs = self.sourceCrs()
+        self.df = None
 
         self.create_layers()
+
+    def merge_df(self):
+        """
+        Merges the network type dataframe with its corresponding result dataframe.
+        """
+        try:
+            # Get the dataframes for the network type and its result
+            df_network_type = getattr(self.net, self.network_type)
+            df_res_network_type = getattr(self.net, f'res_{self.network_type}')
+
+            # df_network_type의 인덱스를 출력합니다.
+            print(f"Index of df_{self.network_type}:")
+            print(df_network_type.index) # Debugging
+            # df_res_network_type의 인덱스를 출력합니다.
+            print(f"Index of df_res_{self.network_type}:")
+            print(df_res_network_type.index)
+
+            if df_network_type is None:
+                print(f"Error: No dataframe found for {self.network_type}.")
+                self.df = pd.DataFrame()  # Set to empty DataFrame
+                return
+
+            print(f"Before sorting df_{self.network_type}\n", df_network_type.head())
+            print(f"Before sorting df_res_{self.network_type}\n", df_res_network_type.head())
+
+            # Sort indices
+            df_network_type.sort_index(inplace=True)
+            if df_res_network_type is not None:
+                df_res_network_type.sort_index(inplace=True)
+
+            print(f"After sorting df_{self.network_type}\n", df_network_type.head())
+            print(f"After sorting df_res_{self.network_type}\n", df_res_network_type.head())
+
+            # Check if the result dataframe exists
+            if df_res_network_type is not None:
+                # Merge the two dataframes on their indices
+                self.df = pd.merge(df_network_type, df_res_network_type, left_index=True, right_index=True,
+                                       suffixes=('', '_res'))
+                print("Merged DataFrame (1):") # Debugging
+                print(self.df.head())
+            else:
+                # If the result dataframe does not exist, use only the network type dataframe
+                self.df = df_network_type
+                print(f"Warning: No res_{self.network_type} exist. Only {self.network_type} returned.")
+
+            # Check if the merged dataframe is empty
+            if self.df.empty:
+                print(f"Warning: Merged dataframe for {self.network_type} is empty.")
+
+            # Create 'pp_type' and 'pp_index' columns
+            self.df.insert(0, 'pp_type', self.network_type)
+            self.df.insert(1, 'pp_index', self.df.index)
+
+            print("Merged DataFrame (2):")  # Debugging
+            print(self.df.head())
+
+        except Exception as e:
+            print(f"Error merging dataframes for {self.network_type}: {str(e)}")
+            return pd.DataFrame()  # Return an empty DataFrame in case of error
 
     def create_layers(self):
         """
         Create a QgsVectorLayer and generate fields from pandapower network.
         """
-        print(f"Creating layer for network type: {self.network_type}")  # 디버깅 출력
-
         # get a pandapower dataframe of a specific network type
-        df = getattr(self.net, self.network_type)
+        # df = getattr(self.net, self.network_type)
+        self.merge_df()
 
         # Check if dataframe is empty
-        if df.empty:
-            print(f"No data available for network type: {self.network_type}, called in create_layers")  # 디버깅 출력
+        if self.df.empty:
+            print(f"No data available for network type: {self.network_type}, called in create_layers")  # Debugging
             return
+        else:
+            print("print df.columns: ", self.df.columns)
+            # print(f"Dataframe for {self.type_layer_name} has {len(df)} rows.")
 
         # generate fields_list dynamically from column of the dataframe
-        for column in df.columns:
-            dt = df[column].dtype
+        for column in self.df.columns:
+            dt = self.df[column].dtype
             qm = convert_dtype_to_qmetatype(dt)
             self.fields_list.append(QgsField(column, qm))
+            # print(f"Generate field: {column} with type {qm}")  # Debugging
 
-        self.layer = QgsVectorLayer(f"Point?crs={self.crs.authid()}", self.network_type, "memory")
+        # Determine geometry type based on network type
+        geometry_type = "Point" if self.network_type in ['bus', 'junction'] else "LineString"
+        print(f"Geometry type for {self.network_type}: {geometry_type}")  # Debugging
+        self.layer = QgsVectorLayer(f"{geometry_type}?crs={self.crs.authid()}", self.type_layer_name, "memory")
 
         # add fields(attribute fields) to layer
         self.layer.startEditing()
         for field in self.fields_list:
             if not self.layer.addAttribute(field):
                 raise RuntimeError(f"Failed to add attribute: {field.name()}")
+            # print(f"Added attribute fields to layer: {field.name()}")  # Debugging
         self.layer.commitChanges()
 
         self.layer.updateFields()  # check updateFields() of parent
+        print(f"Layer CRS after creation: {self.layer.crs().authid()}")  # Debugging
         self.populate_features()
 
     def populate_features(self):
@@ -125,14 +194,16 @@ class PandapowerProvider(QgsVectorDataProvider):
         This function iterates over the rows of the Pandapower DataFrame, creates a QgsFeature for each row,
         sets the feature's geometry and attributes based on the row data, and adds the feature to the QgsVectorLayer.
         """
-        df = getattr(self.net, self.network_type)
+        # df = getattr(self.net, self.network_type)
         features = []
 
-        print(f"Populating features for network type: {self.network_type}")  # 디버깅 출력
-        print(f"Number of rows in dataframe: {len(df)}")  # 디버깅 출력
+        print(f"Populating features for network type: {self.network_type}")  # Debugging
+        print(f"Number of rows in dataframe: {len(self.df)}")
+        print(f"Number of unique indices in dataframe: {len(self.df.index.unique())}")
+        print(f"Layer CRS before adding features: {self.layer.crs().authid()}")  # Debugging
 
         # Populate features
-        for idx, row in df.iterrows():
+        for idx, row in self.df.iterrows():
             feature = QgsFeature()
 
             # Set geometry based on network type
@@ -141,6 +212,9 @@ class PandapowerProvider(QgsVectorDataProvider):
                 if isinstance(geo_data, str):
                     geo_data = json.loads(geo_data)
                 coordinates = geo_data.get('coordinates', [0, 0])
+                # print(f"Bus/Junction coordinates for index {idx}: {coordinates}")  # Debugging #########
+                if not coordinates:
+                    print(f"Warning: No coordinates found for index {idx}")  # Debugging
                 feature.setGeometry(
                     QgsGeometry.fromPointXY(QgsPointXY(coordinates[0], coordinates[1])))
             elif self.network_type in ['line', 'pipe']:
@@ -148,11 +222,20 @@ class PandapowerProvider(QgsVectorDataProvider):
                 if isinstance(geo_data, str):
                     geo_data = json.loads(geo_data)
                 coordinates = geo_data.get('coordinates', [])
+                if not coordinates:
+                    print(f"Warning: No coordinates found for index {idx}")  # Debugging
+                # print(f"Line/Pipe coordinates for index {idx}: {coordinates}")  # Debugging ############
+                if not coordinates:
+                    print(f"Warning: No coordinates found for index {idx}")  # Debugging
                 # Turn Coord into QgsPoint Object
                 points = [QgsPointXY(coord[0], coord[1]) for coord in coordinates]
                 # Create QgsLineString Object
                 linestring = QgsLineString(points)
                 feature.setGeometry(QgsGeometry(linestring))
+
+            # Check if geometry is valid
+            if not feature.geometry().isGeosValid():
+                print(f"Invalid geometry for feature at index {idx}")
 
             # Collect attributes dynamically
             attributes = []
@@ -162,11 +245,13 @@ class PandapowerProvider(QgsVectorDataProvider):
                     attributes.append(row[field_name])
                 else:
                     attributes.append(None)
+            # print(f"Debugging: Attributes for index {idx}: {attributes}")  # Debugging ####################
 
             feature.setAttributes(attributes)
             features.append(feature)
 
-        print(f"Number of features created: {len(features)}")  # 디버깅 출력
+        print(f"Debugging: Number of features created: {len(features)}")  # Debugging
+        print(f"Debugging: Layer CRS after adding to project: {self.layer.crs().authid()}")  # Debugging
 
         self.layer.addFeatures(features)
         self.update_layer()
@@ -199,8 +284,8 @@ class PandapowerProvider(QgsVectorDataProvider):
         :rtype: int
         """
         try:
-            df = getattr(self.net, self.network_type)
-            return len(df)
+            # df = getattr(self.net, self.network_type)
+            return len(self.df)
         except Exception as e:
             self.pushError(f"Failed to count features: {str(e)}")
             return 0
@@ -218,6 +303,7 @@ class PandapowerProvider(QgsVectorDataProvider):
         crs = QgsCoordinateReferenceSystem.fromEpsgId(self.current_crs)
         if not crs.isValid():
             raise ValueError(f"CRS ID {self.current_crs} is not valid.")
+        print(f"CRS is valid: {crs.authid()}") # Debugging
         return crs
 
     @staticmethod
@@ -327,7 +413,7 @@ class PandapowerProvider(QgsVectorDataProvider):
                 else:
                     raise ValueError(f"Unsupported network_type '{self.network_type}'")
             # Delete features from the QGIS layer
-            self.layer.deleteFeatues(ids)
+            self.layer.deleteFeatures(ids)
 
             self.layer.commitChanges()
             self.update_layer()
@@ -346,13 +432,13 @@ class PandapowerProvider(QgsVectorDataProvider):
         :rtype: bool
         """
         try:
-            df = getattr(self.net, self.network_type)
+            # df = getattr(self.net, self.network_type)
 
             # Change value of attribute in field of changed feature
             for feature_id, changed_map in attr_map.items():
                 for attr_index, new_value in changed_map.items():
                     field_name = self.fields_list[attr_index].name()
-                    df.at[feature_id, field_name] = new_value
+                    self.df.at[feature_id, field_name] = new_value
 
             # Change attribute values in the QGIS layer
             self.layer.dataProvider().changeAttributeValues(attr_map)
@@ -427,14 +513,14 @@ class PandapowerProvider(QgsVectorDataProvider):
         :rtype: bool
         """
         try:
-            df = getattr(self.net, self.network_type)
+            # df = getattr(self.net, self.network_type)
             self.layer.startEditing()
 
             for attribute in attributes:
                 # add to fields_list of instance
                 self.fields_list.append(attribute)
                 # add to pandapower
-                df[attribute.name()] = pd.Series(dtype=attribute.typeName())
+                self.df[attribute.name()] = pd.Series(dtype=attribute.typeName())
                 # add to layer
                 self.layer.addAttribute(attribute)
 
@@ -455,7 +541,7 @@ class PandapowerProvider(QgsVectorDataProvider):
         :rtype: bool
         """
         try:
-            df = getattr(self.net, self.network_type)
+            # df = getattr(self.net, self.network_type)
             self.layer.startEditing()
 
             # Delete attributes from the internal fields list and the pandas DataFrame
@@ -465,7 +551,7 @@ class PandapowerProvider(QgsVectorDataProvider):
                 # delete from fields_list of instance
                 self.fields_list.remove(self.fields_list[attr_id])
                 # delete from pandapower
-                df.drop(columns=[attr_name], inplace=True)
+                self.df.drop(columns=[attr_name], inplace=True)
                 # delete from layer
                 self.layer.deleteAttribute(attr_id)
 

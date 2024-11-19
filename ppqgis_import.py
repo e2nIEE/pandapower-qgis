@@ -187,7 +187,7 @@ def power_network(parent, file) -> None:
                 'suffix': 'line',
                 'renderer': line_renderer,
             }
-            print('checkpoint in ppimport')
+            print('checkpoint in ppimport, power_network')
             # create bus and line layers if they contain features
             for obj in [bus, line]:
                 # avoid adding empty layer
@@ -205,14 +205,30 @@ def power_network(parent, file) -> None:
                         file.close()
                     layer = QgsVectorLayer(file_path, type_layer_name, "ogr")
                 else:
-                    layer = QgsVectorLayer(geojson.dumps(gj), type_layer_name, "ogr")
+                    layer = QgsVectorLayer(geojson.dumps(gj), type_layer_name, "ogr")   # check, und dump to geojson auch 기존은 gj라는 데이터소스를 사용하여 레이어를 만들었으나 나는 레이어를 만들고 데이터를 추가하는 방식을 사용하였음 여기에서 차이가 발생하므로 
                     '''
-                provider = PandapowerProvider(net, network_type=obj['suffix'], current_crs=current_crs) #
+                provider = PandapowerProvider(net, type_layer_name, network_type=obj['suffix'], current_crs=current_crs) #
                 layer = provider.layer #
                 layer.setRenderer(obj['renderer'])
                 # add layer to group
                 QgsProject.instance().addMapLayer(layer, False)
                 group.addLayer(layer)
+                # provider.update_layer()
+
+                # Debugging: Check if layer is added to the project
+                if QgsProject.instance().mapLayersByName(type_layer_name):
+                    print(f"Layer '{type_layer_name}' successfully added to the project.")
+                else:
+                    print(f"Failed to add layer '{type_layer_name}' to the project.")
+                # 현재 QGIS 프로젝트의 CRS 가져오기
+                project_crs = QgsProject.instance().crs()
+                # CRS의 EPSG 코드 출력
+                print(f"Current project CRS: {project_crs.authid()}")
+                # CRS의 이름 출력
+                print(f"CRS Name: {project_crs.description()}")
+                # CRS의 WKT(Well-Known Text) 표현 출력
+                print(f"CRS WKT: {project_crs.toWkt()}")
+                print(f"Current layer crs: {current_crs}")
 
             if buses or lines:
                 # Move layers above TileLayer
