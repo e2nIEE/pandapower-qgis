@@ -195,6 +195,8 @@ class PandapowerProvider(QgsVectorDataProvider):
         sets the feature's geometry and attributes based on the row data, and adds the feature to the QgsVectorLayer.
         """
         # df = getattr(self.net, self.network_type)
+        df_geodata = getattr(self.net, f'{self.network_type}_geodata') # bus_geo
+        df_geodata.sort_index(inplace=True)
         features = []
 
         print(f"Populating features for network type: {self.network_type}")  # Debugging
@@ -205,37 +207,52 @@ class PandapowerProvider(QgsVectorDataProvider):
         # Populate features
         for idx, row in self.df.iterrows():
             feature = QgsFeature()
+            if idx in df_geodata.index:
+                row2 = df_geodata.loc[idx]
+                # Set geometry based on network type
+                if self.network_type in ['bus', 'junction']: # to do  junction
+                    #geo_data = row.get('geo', '{}') # with non-wgs data
+                    #if geo_data:
+                        #print("geo_data isn't instance??", geo_data)
+                    #if isinstance(geo_data, str):
+                        #geo_data = json.loads(geo_data) # with non-wgs data
+                        #print("Test: geo_data is instance: ", geo_data)
+                    #coordinates = geo_data.get('data', [0, 0])
+                    #print("coordinates???: ", coordinates)
+                    #if coordinates == {} or coordinates is None: # with wgs data
+                    bus_geo_data_x = row2['x'] if 'x' in row2 else 0
+                    bus_geo_data_y = row2['y'] if 'y' in row2 else 0
+                    bus_coordinates = [bus_geo_data_x, bus_geo_data_y]
+                    #print(f"{self.network_type}_coordinates for index {idx}: ", bus_coordinates)
 
-            # Set geometry based on network type
-            if self.network_type in ['bus', 'junction']:
-                geo_data = row.get('geo', '{}')
-                if isinstance(geo_data, str):
-                    geo_data = json.loads(geo_data)
-                coordinates = geo_data.get('coordinates', [0, 0])
-                # print(f"Bus/Junction coordinates for index {idx}: {coordinates}")  # Debugging #########
-                if not coordinates:
-                    print(f"Warning: No coordinates found for index {idx}")  # Debugging
-                feature.setGeometry(
-                    QgsGeometry.fromPointXY(QgsPointXY(coordinates[0], coordinates[1])))
-            elif self.network_type in ['line', 'pipe']:
-                geo_data = row.get('geo', '{}')
-                if isinstance(geo_data, str):
-                    geo_data = json.loads(geo_data)
-                coordinates = geo_data.get('coordinates', [])
-                if not coordinates:
-                    print(f"Warning: No coordinates found for index {idx}")  # Debugging
-                # print(f"Line/Pipe coordinates for index {idx}: {coordinates}")  # Debugging ############
-                if not coordinates:
-                    print(f"Warning: No coordinates found for index {idx}")  # Debugging
-                # Turn Coord into QgsPoint Object
-                points = [QgsPointXY(coord[0], coord[1]) for coord in coordinates]
-                # Create QgsLineString Object
-                linestring = QgsLineString(points)
-                feature.setGeometry(QgsGeometry(linestring))
+                    # print(f"Bus/Junction coordinates for index {idx}: {coordinates}")  # Debugging #########
+                    if not bus_coordinates:
+                        print(f"Warning: No coordinates found for Bus index {idx}")  # Debugging
+                    feature.setGeometry(
+                        QgsGeometry.fromPointXY(QgsPointXY(bus_geo_data_x, bus_geo_data_y)))
+
+                elif self.network_type in ['line', 'pipe']: # to do pipe
+                    # geo_data = row.get('geo', '{}')
+                    # if geo_data:
+                        # print("geo_data isn\'t instance??", geo_data)
+                    # if isinstance(geo_data, str):
+                        #geo_data = json.loads(geo_data)
+                        # print("Test: geo_data is instance")
+                    coordinates = row2['coords'] if 'coords' in row2 else []
+                    if not coordinates:
+                        print(f"Warning: No coordinates found for index {idx}")  # Debugging
+                    else:
+                        pass
+                        # print(f"Line coordinates found for index {idx}: ", coordinates)
+                    # Turn Coord into QgsPoint Object
+                    points = [QgsPointXY(coord[0], coord[1]) for coord in coordinates]
+                    # Create QgsLineString Object
+                    linestring = QgsLineString(points)
+                    feature.setGeometry(QgsGeometry(linestring))
 
             # Check if geometry is valid
-            if not feature.geometry().isGeosValid():
-                print(f"Invalid geometry for feature at index {idx}")
+            # if feature.geometry().isGeosValid():
+                # print(f"valid geometry for feature at index {idx}")
 
             # Collect attributes dynamically
             attributes = []
@@ -253,8 +270,11 @@ class PandapowerProvider(QgsVectorDataProvider):
         print(f"Debugging: Number of features created: {len(features)}")  # Debugging
         print(f"Debugging: Layer CRS after adding to project: {self.layer.crs().authid()}")  # Debugging
 
+        self.layer.startEditing()
         self.layer.addFeatures(features)
+        self.layer.startEditing()
         self.update_layer()
+        print(f"Number of features in layer {self.type_layer_name}:  {self.layer.featureCount()}")
 
     def featureSource(self):
         return PandapowerFeatureSource(self)
