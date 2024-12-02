@@ -26,9 +26,18 @@ import os.path
 from qgis.PyQt.QtGui import QColor
 from qgis.core import QgsProject, QgsVectorLayer, QgsApplication, \
     QgsGraduatedSymbolRenderer, QgsSingleSymbolRenderer, QgsRendererRange, QgsClassificationRange, \
-    QgsMarkerSymbol, QgsLineSymbol, QgsGradientColorRamp
+    QgsMarkerSymbol, QgsLineSymbol, QgsGradientColorRamp, QgsProviderRegistry, QgsProviderMetadata
 
 from .ppprovider import PandapowerProvider
+
+# Register custom data provider
+if "PandapowerProvider" not in QgsProviderRegistry.instance().providerList():
+    metadata = QgsProviderMetadata(
+        "PandapowerProvider",   # identifier
+        "Pandapower Provider for pandapower QGIS Plugin",   # description
+        lambda uri, providerOptions, flags: PandapowerProvider(uri, providerOptions, flags) # object constructor
+    )
+    QgsProviderRegistry.instance().registerProvider(metadata)
 
 # constants for color ramps
 BUS_LOW_COLOR = "#ccff00"  # lime
@@ -187,7 +196,7 @@ def power_network(parent, file) -> None:
                 'suffix': 'line',
                 'renderer': line_renderer,
             }
-            print('checkpoint in ppimport, power_network')
+            print('Debugging: checkpoint in ppimport, power_network')
             # create bus and line layers if they contain features
             for obj in [bus, line]:
                 # avoid adding empty layer

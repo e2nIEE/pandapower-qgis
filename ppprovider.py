@@ -22,12 +22,12 @@ pandapower 객체의 데이터를 읽어 QGIS 피처로 변환합니다.
 from qgis.core import QgsVectorDataProvider, QgsVectorLayer, QgsFeature, QgsField, QgsFields, \
     QgsGeometry, QgsPointXY, QgsLineString, QgsWkbTypes, QgsProject, QgsCoordinateReferenceSystem, \
     QgsFeatureRequest, QgsFeatureIterator, QgsFeatureSource, QgsAbstractFeatureSource, QgsFeatureSink, \
-    QgsDataProvider
+    QgsDataProvider, QgsProviderRegistry, QgsProviderMetadata
 from qgis.PyQt.QtCore import QMetaType
 import json
 import pandas as pd
 import pandapower as pp
-
+import pandapipes as ppi
 
 class PandapowerFeatureSource(QgsAbstractFeatureSource):
     def __init__(self, provider):
@@ -86,8 +86,27 @@ class PandapowerProvider(QgsVectorDataProvider):
         self.current_crs = current_crs if current_crs else 4326
         self.crs = self.sourceCrs()
         self.df = None
+        #self.changed_feature_ids = set()
+
+        provider_list = QgsProviderRegistry.instance().providerList()
+        print(provider_list)
 
         self.create_layers()
+
+    '''def initGui(self):
+        # Register custom data provider, name(identifier) as "PandapowerProvider"
+        print("initGui 1------------------------------------------------------")
+        QgsProviderRegistry.instance().registerProvider('PandapowerProvider', PandapowerProvider)
+        print("initGui 2------------------------------------------------------")'''
+
+    """@staticmethod
+    def create(net, type_layer_name, uri=None, providerOptions, flags):
+        return PandapowerProvider(uri, providerOptions, flags)"""
+
+
+    def unload(self):
+        # Remove custom data provider when it is deleted
+        QgsProviderRegistry.instance().removeProvider('PandapowerProvider')
 
     def merge_df(self):
         """
@@ -174,10 +193,25 @@ class PandapowerProvider(QgsVectorDataProvider):
         # Determine geometry type based on network type
         geometry_type = "Point" if self.network_type in ['bus', 'junction'] else "LineString"
         print(f"Geometry type for {self.network_type}: {geometry_type}")  # Debugging
-        self.layer = QgsVectorLayer(f"{geometry_type}?crs={self.crs.authid()}", self.type_layer_name, "memory")
+        #self.layer = QgsVectorLayer(f"{geometry_type}?crs={self.crs.authid()}", self.type_layer_name, "memory")
+        if self.uri:
+            self.layer = QgsVectorLayer(self.uri, self.type_layer_name, "PandapowerProvider")
+        else:
+            self.layer = QgsVectorLayer(f"{geometry_type}?crs={self.crs.authid()}", self.type_layer_name, "PandapowerProvider")
+
+        if not self.layer.isValid():
+            print("Basic Layer failed to load!----------------------------------------------------------------")
+        else:
+            print("Basic Layer loaded!---------------------------------------------------------------")
 
         # add fields(attribute fields) to layer
         self.layer.startEditing()
+
+        if not self.layer.isEditable():
+            print("not editable")
+        else:
+            print("editable")
+
         for field in self.fields_list:
             if not self.layer.addAttribute(field):
                 raise RuntimeError(f"Failed to add attribute: {field.name()}")
@@ -272,7 +306,7 @@ class PandapowerProvider(QgsVectorDataProvider):
 
         self.layer.startEditing()
         self.layer.addFeatures(features)
-        self.layer.startEditing()
+        self.layer.commitChanges()
         self.update_layer()
         print(f"Number of features in layer {self.type_layer_name}:  {self.layer.featureCount()}")
 
@@ -316,9 +350,8 @@ class PandapowerProvider(QgsVectorDataProvider):
 
     @staticmethod
     def name():
-        return "Pandapower Provider"
+        return "PandapowerProvider"
 
-    # vllt unnötig?
     def sourceCrs(self):
         crs = QgsCoordinateReferenceSystem.fromEpsgId(self.current_crs)
         if not crs.isValid():
@@ -343,11 +376,28 @@ class PandapowerProvider(QgsVectorDataProvider):
         """
         pass
 
-    def update_pandapower_net(self):
+    def update_qgis(self):
         """
-        Update Pandapower Net based on current QGIS Layer.
-        Compare to changeAttributeValues, it is not for direct change,
-        it updates all changes. (written just in case)
+        Update QGIS based on current Pandapower Net.
+        It is for direct change.
+        그러니까 qgis 내에서 벌어진 건 지가 알아서 업데이트할거고 net에서 발생한 변경점을 실시간으로 업데이트하는 거
+        """
+
+        pass
+
+    def update_pandapower_net(self, changed_feature_ids):
+        """
+        Update Pandapower Net based on current QGIS Layer with changed feature ids.
+        feature의 변경이 일어나는 함수(ex. addFeatures, changeAttributeValues 등)마다 feature의 index 혹은 id를 수집하여
+        update_pandapower_net에 넘겨서 실시간으로 업데이트하는 것 어때
+        한 번 이 함수가 호출될 때마다 changed_feature_ids는 초기화되어야 함
+        # (구버전) Compare to changeAttributeValues, it is not for direct change,
+        # it updates all changes. (written just in case)
+        현재는 데이터프레임과 레이어만 변경되는데 여기에 net도 연동되도록 만들어야
+        현재 이 함수 코드는 해당 기능을 수행하고 있지 않은듯
+
+        param changed_feature_ids: Set of changed features
+        type changed_feature_ids: set
         """
         for feature in self.layer.getFeatures():
             idx = feature.id()
@@ -367,6 +417,8 @@ class PandapowerProvider(QgsVectorDataProvider):
         :rtype: bool
         """
         try:
+            self.layer.startEditing()
+
             for feature in feature_list:
                 # Validate that the feature fields match the existing fields list
                 if feature.fields().names() != [field.name() for field in self.fields_list]:
@@ -402,6 +454,7 @@ class PandapowerProvider(QgsVectorDataProvider):
                     raise ValueError(f"Unsupported network_type '{self.network_type}'")
 
             self.layer.addFeatures(feature_list)
+            self.layer.commitChanges()
             self.update_layer()
             return True
         except Exception as e:
@@ -417,6 +470,7 @@ class PandapowerProvider(QgsVectorDataProvider):
         :return: True if features were deleted successfully, False otherwise.
         :rtype: bool
         """
+        print("deleteFeatures")
         try:
             self.layer.startEditing()
 
@@ -451,17 +505,24 @@ class PandapowerProvider(QgsVectorDataProvider):
         :return: True if attributes were changed successfully, False otherwise.
         :rtype: bool
         """
+        print("changeAttributeValues")
         try:
+            self.layer.startEditing()
             # df = getattr(self.net, self.network_type)
 
             # Change value of attribute in field of changed feature
             for feature_id, changed_map in attr_map.items():
                 for attr_index, new_value in changed_map.items():
                     field_name = self.fields_list[attr_index].name()
+                    # Update dataframe # df update nötig??
                     self.df.at[feature_id, field_name] = new_value
+                    # Update net
+                    if hasattr(self.net, self.network_type):
+                        getattr(self.net, self.network_type).at[feature_id, field_name] = new_value
 
             # Change attribute values in the QGIS layer
             self.layer.dataProvider().changeAttributeValues(attr_map)
+            self.layer.commitChanges()
             self.update_layer()
             return True
         except Exception as e:
@@ -479,6 +540,7 @@ class PandapowerProvider(QgsVectorDataProvider):
         :return: True if geometries were changed successfully, False otherwise.
         :rtype: bool
         """
+        print("changeGeometryValues")
         try:
             self.layer.startEditing()
 
@@ -486,10 +548,10 @@ class PandapowerProvider(QgsVectorDataProvider):
                 # Apply changed geometry to pandapower network
                 if self.network_type in ['bus', 'junction']:
                     new_geo_value = [new_geometry.asPoint().x(), new_geometry.asPoint().y()]
-                    self.net.bus.at[feature_id, 'geo'] = new_geo_value
+                    getattr(self.net, self.network_type).at[feature_id, 'geo'] = new_geo_value
                 elif self.network_type in ['line', 'pipe']:
                     new_geo_value = [[point.x(), point.y()] for point in new_geometry.asPolyline()]
-                    self.net.line.at[feature_id, 'geo'] = new_geo_value
+                    getattr(self.net, self.network_type).at[feature_id, 'geo'] = new_geo_value
 
                 # Apply changed geometry to vector layer
                 self.layer.changeGeometry(feature_id, new_geometry)
@@ -514,6 +576,7 @@ class PandapowerProvider(QgsVectorDataProvider):
         :return: True if features were changed successfully, False otherwise.
         :rtype: bool
         """
+        print("changeFeatures")
         try:
             attr_success = self.changeAttributeValues(attr_map)
             geom_success = self.changeGeometryValues(geometry_map)
@@ -532,6 +595,7 @@ class PandapowerProvider(QgsVectorDataProvider):
         :return: True if attributes were added successfully, False otherwise.
         :rtype: bool
         """
+        print("addAttritbutes")
         try:
             # df = getattr(self.net, self.network_type)
             self.layer.startEditing()
@@ -541,6 +605,9 @@ class PandapowerProvider(QgsVectorDataProvider):
                 self.fields_list.append(attribute)
                 # add to pandapower
                 self.df[attribute.name()] = pd.Series(dtype=attribute.typeName())
+                # add to net
+                getattr(self.net, self.network_type)[attribute.name()] = (
+                        pd.Series(dtype=attribute.typeName()))
                 # add to layer
                 self.layer.addAttribute(attribute)
 
@@ -560,6 +627,7 @@ class PandapowerProvider(QgsVectorDataProvider):
         :return: True if attributes were deleted successfully, False otherwise.
         :rtype: bool
         """
+        print("deleteAttributes")
         try:
             # df = getattr(self.net, self.network_type)
             self.layer.startEditing()
@@ -572,6 +640,8 @@ class PandapowerProvider(QgsVectorDataProvider):
                 self.fields_list.remove(self.fields_list[attr_id])
                 # delete from pandapower
                 self.df.drop(columns=[attr_name], inplace=True)
+                # delete from net
+                getattr(self.net, self.network_type).drop(columns=[attr_name], inplace=True)
                 # delete from layer
                 self.layer.deleteAttribute(attr_id)
 
@@ -583,7 +653,7 @@ class PandapowerProvider(QgsVectorDataProvider):
             return False
 
     def renameAttributes(self):
-        pass
+        print("renameAttributes")
 
 print('Ende des ppprovider')
 
