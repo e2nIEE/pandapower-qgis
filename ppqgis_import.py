@@ -30,15 +30,6 @@ from qgis.core import QgsProject, QgsVectorLayer, QgsApplication, \
 
 from .ppprovider import PandapowerProvider
 
-# Register custom data provider
-if "PandapowerProvider" not in QgsProviderRegistry.instance().providerList():
-    metadata = QgsProviderMetadata(
-        "PandapowerProvider",   # identifier
-        "Pandapower Provider for pandapower QGIS Plugin",   # description
-        lambda uri, providerOptions, flags: PandapowerProvider(uri, providerOptions, flags) # object constructor
-    )
-    QgsProviderRegistry.instance().registerProvider(metadata)
-
 # constants for color ramps
 BUS_LOW_COLOR = "#ccff00"  # lime
 BUS_HIGH_COLOR = "#00cc44"  # green
@@ -216,8 +207,24 @@ def power_network(parent, file) -> None:
                 else:
                     layer = QgsVectorLayer(geojson.dumps(gj), type_layer_name, "ogr")   # check, und dump to geojson auch 기존은 gj라는 데이터소스를 사용하여 레이어를 만들었으나 나는 레이어를 만들고 데이터를 추가하는 방식을 사용하였음 여기에서 차이가 발생하므로 
                     '''
-                provider = PandapowerProvider(net, type_layer_name, network_type=obj['suffix'], current_crs=current_crs) #
-                layer = provider.layer #
+                provider_list = QgsProviderRegistry.instance().providerList()
+                print("Registered providers:", provider_list, "before ---------------------------")
+                if "PandapowerProvider" not in QgsProviderRegistry.instance().providerList():
+                    metadata = QgsProviderMetadata(
+                        "PandapowerProvider",  # identifier
+                        "Pandapower Provider for pandapower QGIS Plugin",  # description
+                        #lambda uri, providerOptions, flags: PandapowerProvider(net, type_layer_name, network_type=obj['suffix'], current_crs=current_crs, uri=None)
+                            # no more recommended constructor
+                        #"pandapower_qgis"  # uri
+                        "ppprovider"    # uri
+                    )
+                    QgsProviderRegistry.instance().registerProvider(metadata)
+                provider_list = QgsProviderRegistry.instance().providerList()
+                print("Registered providers:", provider_list, "after ------------------------------")
+
+                provider = PandapowerProvider(net, type_layer_name, network_type=obj['suffix'], current_crs=current_crs, uri=None) #
+                provider.create_layers()
+                layer = provider.layer
                 layer.setRenderer(obj['renderer'])
                 # add layer to group
                 QgsProject.instance().addMapLayer(layer, False)

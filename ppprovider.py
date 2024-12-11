@@ -89,9 +89,9 @@ class PandapowerProvider(QgsVectorDataProvider):
         #self.changed_feature_ids = set()
 
         provider_list = QgsProviderRegistry.instance().providerList()
-        print(provider_list)
+        print("provider list by init ppprovider", provider_list)
 
-        self.create_layers()
+        #self.create_layers()
 
     '''def initGui(self):
         # Register custom data provider, name(identifier) as "PandapowerProvider"
@@ -201,6 +201,7 @@ class PandapowerProvider(QgsVectorDataProvider):
 
         if not self.layer.isValid():
             print("Basic Layer failed to load!----------------------------------------------------------------")
+            return
         else:
             print("Basic Layer loaded!---------------------------------------------------------------")
 
