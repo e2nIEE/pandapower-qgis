@@ -29,6 +29,7 @@ from qgis.core import QgsProject, QgsVectorLayer, QgsApplication, \
     QgsMarkerSymbol, QgsLineSymbol, QgsGradientColorRamp, QgsProviderRegistry, QgsProviderMetadata
 
 from .ppprovider import PandapowerProvider
+from .network_container import NetworkContainer
 
 # constants for color ramps
 BUS_LOW_COLOR = "#ccff00"  # lime
@@ -207,8 +208,12 @@ def power_network(parent, file) -> None:
                 else:
                     layer = QgsVectorLayer(geojson.dumps(gj), type_layer_name, "ogr")   # check, und dump to geojson auch 기존은 gj라는 데이터소스를 사용하여 레이어를 만들었으나 나는 레이어를 만들고 데이터를 추가하는 방식을 사용하였음 여기에서 차이가 발생하므로 
                     '''
+
                 provider_list = QgsProviderRegistry.instance().providerList()
                 print("Registered providers:", provider_list, "before ---------------------------")
+                '''
+                # uri = f"pandapower:{type_layer_name}"
+                uri = "C:/Users/slee/Documents/pp_old/mv_oberrhein_wgs.json"
                 if "PandapowerProvider" not in QgsProviderRegistry.instance().providerList():
                     metadata = QgsProviderMetadata(
                         "PandapowerProvider",  # identifier
@@ -216,15 +221,56 @@ def power_network(parent, file) -> None:
                         #lambda uri, providerOptions, flags: PandapowerProvider(net, type_layer_name, network_type=obj['suffix'], current_crs=current_crs, uri=None)
                             # no more recommended constructor
                         #"pandapower_qgis"  # uri
-                        "ppprovider"    # uri
+                        #"ppprovider"    # uri
+                        uri # or net?
                     )
                     QgsProviderRegistry.instance().registerProvider(metadata)
+                '''
+                uri_parts = {
+                    "path": r"C:\Users\slee\Documents\pp_old\mv_oberrhein_wgs.json", #str(file_path),
+                    "network_type": obj["suffix"],
+                    "geometry": "Point" if obj["suffix"] in ['bus', 'junction'] else "LineString",
+                    "epsg": str(current_crs)
+                }
+                provider_metadata = QgsProviderRegistry.instance().providerMetadata("PandapowerProvider")
+                uri = provider_metadata.encodeUri(uri_parts)
+
+                # 네트워크 데이터를 컨테이너에 등록
+                network_data = {
+                    'net': net,
+                    'type_layer_name': type_layer_name,
+                    'network_type': obj['suffix'],
+                    'current_crs': current_crs
+                }
+                NetworkContainer.register_network(uri, network_data)
+                print("네트워크 호출완료!!!!!!!!!!!!!")
+                #print(network_data['net'])
+
+                layer = QgsVectorLayer(uri, type_layer_name, "PandapowerProvider")
+                print("qgsvectorlayer 호출!!!!!!!!!!!!!!!!!!")
+                layer.dataProvider().create_layers(layer) ################################
+                print("레이어 기능:", layer.dataProvider().capabilities())
+
                 provider_list = QgsProviderRegistry.instance().providerList()
                 print("Registered providers:", provider_list, "after ------------------------------")
 
-                provider = PandapowerProvider(net, type_layer_name, network_type=obj['suffix'], current_crs=current_crs, uri=None) #
+
+                '''
+                #provider = PandapowerProvider(net, type_layer_name, network_type=obj['suffix'], current_crs=current_crs, uri=None) #
+                data_source = None
+                options = {
+                    "net": net,
+                    "type_layer_name": type_layer_name,
+                    "network_type": obj["suffix"],
+                    "current_crs": current_crs,
+                    "uri": None
+                }
+                provider = QgsProviderRegistry.instance().createProvider("PandapowerProvider", data_source, options, flags=None)
+
+                provider = PandapowerProvider(uri)
                 provider.create_layers()
                 layer = provider.layer
+                '''
                 layer.setRenderer(obj['renderer'])
                 # add layer to group
                 QgsProject.instance().addMapLayer(layer, False)

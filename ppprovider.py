@@ -22,12 +22,14 @@ pandapower 객체의 데이터를 읽어 QGIS 피처로 변환합니다.
 from qgis.core import QgsVectorDataProvider, QgsVectorLayer, QgsFeature, QgsField, QgsFields, \
     QgsGeometry, QgsPointXY, QgsLineString, QgsWkbTypes, QgsProject, QgsCoordinateReferenceSystem, \
     QgsFeatureRequest, QgsFeatureIterator, QgsFeatureSource, QgsAbstractFeatureSource, QgsFeatureSink, \
-    QgsDataProvider, QgsProviderRegistry, QgsProviderMetadata
+    QgsDataProvider, QgsProviderRegistry
 from qgis.PyQt.QtCore import QMetaType
 import json
 import pandas as pd
 import pandapower as pp
 import pandapipes as ppi
+from .network_container import NetworkContainer
+
 
 class PandapowerFeatureSource(QgsAbstractFeatureSource):
     def __init__(self, provider):
@@ -69,22 +71,48 @@ def convert_dtype_to_qmetatype(dtype):
 
 
 class PandapowerProvider(QgsVectorDataProvider):
-    def __init__(self, net, type_layer_name, network_type, current_crs, uri=None):
-        # Call the constructor of the parent class # optional
-        self.uri = uri
-        providerOptions = QgsDataProvider.ProviderOptions()
-        flags = QgsDataProvider.ReadFlags()
-        super().__init__(self.uri, providerOptions, flags)
+    @staticmethod
+    def createProvider(uri, providerOptions=QgsDataProvider.ProviderOptions(), flags = QgsDataProvider.ReadFlags()):
+        """프로바이더 인스턴스를 생성하는 팩토리 메서드"""
+        provider = PandapowerProvider(uri, providerOptions, flags)
+        print("프로바이더 프린트되나?", provider)
+        print(uri)
+        #provider.create_layers()  # 필요한 초기화 작업 수행
+        return provider
 
-        self.net = net
-        self.type_layer_name = type_layer_name
-        if network_type not in ['bus', 'line', 'junction', 'pipe']:
+
+    def __init__(self, uri = "", providerOptions = QgsDataProvider.ProviderOptions(), flags = QgsDataProvider.ReadFlags()):
+        super().__init__(uri)
+        self.uri = uri
+        # 레지스트리에서 메타데이터 인스턴스 가져오기
+        metadata_provider = QgsProviderRegistry.instance().providerMetadata("PandapowerProvider")
+        self.uri_parts = metadata_provider.decodeUri(uri)
+        self._provider_options = providerOptions
+        self._flags = flags
+
+        # 컨테이너에서 네트워크 데이터 가져오기
+        network_data = NetworkContainer.get_network(uri)
+        if network_data is None:
+            self._is_valid = False
+            print("설마 너냐??????????????????????????????????????????????")
+            return
+
+        # 네트워크 데이터 설정
+        self.net = network_data['net']
+        print("/////////////////////////net 값 뭔지 디버깅", self.net)
+        self.type_layer_name = network_data['type_layer_name']
+        print("/////////////////////////타입 레이어 네임 뭔지 디버깅", self.type_layer_name)
+        if network_data['network_type'] not in ['bus', 'line', 'junction', 'pipe']:
             raise ValueError("Invalid network_type. Expected 'bus', 'line', 'junction', 'pipe'.")  # necessary?
-        self.network_type = network_type
+        else:
+            self.network_type = network_data['network_type']
+        self.current_crs = network_data['current_crs'] if network_data['current_crs'] else 4326
+        self.crs = self.sourceCrs()
+        self._is_valid = True
+
+        self.vn_kv = None
         self.layer = None
         self.fields_list = QgsFields()
-        self.current_crs = current_crs if current_crs else 4326
-        self.crs = self.sourceCrs()
         self.df = None
         #self.changed_feature_ids = set()
 
@@ -167,7 +195,8 @@ class PandapowerProvider(QgsVectorDataProvider):
             print(f"Error merging dataframes for {self.network_type}: {str(e)}")
             return pd.DataFrame()  # Return an empty DataFrame in case of error
 
-    def create_layers(self):
+
+    def create_layers(self, layer): ##################################
         """
         Create a QgsVectorLayer and generate fields from pandapower network.
         """
@@ -193,11 +222,33 @@ class PandapowerProvider(QgsVectorDataProvider):
         # Determine geometry type based on network type
         geometry_type = "Point" if self.network_type in ['bus', 'junction'] else "LineString"
         print(f"Geometry type for {self.network_type}: {geometry_type}")  # Debugging
+        print(f"URI type: {type(self.uri)}, value: {self.uri}") # Debugging
         #self.layer = QgsVectorLayer(f"{geometry_type}?crs={self.crs.authid()}", self.type_layer_name, "memory")
+
+        '''
         if self.uri:
+            # 파일 기반 URI 구성
+            #uri_string = f'path="{self.uri}";network_type="{self.network_type}";geometry="{geometry_type}";epsg="{self.current_crs}"'
+            print(f"Creating layer with URI: {self.uri}")
             self.layer = QgsVectorLayer(self.uri, self.type_layer_name, "PandapowerProvider")
         else:
             self.layer = QgsVectorLayer(f"{geometry_type}?crs={self.crs.authid()}", self.type_layer_name, "PandapowerProvider")
+        '''
+        self.layer = layer ######################### return self.layer 해야 하는 거 아니야?
+
+        current_capabilities = layer.dataProvider().capabilities()
+        print("레이어 기능:", current_capabilities)
+        if current_capabilities & QgsVectorDataProvider.AddFeatures:
+            print("AddFeatures 기능이 활성화되어 있습니다")
+        if current_capabilities & QgsVectorDataProvider.ChangeAttributeValues:
+            print("ChangeAttributeValues 기능이 활성화되어 있습니다")
+        print("=== 레이어 기능 세부 사항 ===")
+        print(f"피처 추가 가능: {bool(current_capabilities & QgsVectorDataProvider.AddFeatures)}")
+        print(f"피처 삭제 가능: {bool(current_capabilities & QgsVectorDataProvider.DeleteFeatures)}")
+        print(f"속성값 변경 가능: {bool(current_capabilities & QgsVectorDataProvider.ChangeAttributeValues)}")
+        print(f"속성 추가 가능: {bool(current_capabilities & QgsVectorDataProvider.AddAttributes)}")
+        print(f"속성 삭제 가능: {bool(current_capabilities & QgsVectorDataProvider.DeleteAttributes)}")
+
 
         if not self.layer.isValid():
             print("Basic Layer failed to load!----------------------------------------------------------------")
@@ -205,8 +256,19 @@ class PandapowerProvider(QgsVectorDataProvider):
         else:
             print("Basic Layer loaded!---------------------------------------------------------------")
 
+        if not self.layer.isEditable():
+            print("not editable")
+        else:
+            print("editable")
+
         # add fields(attribute fields) to layer
         self.layer.startEditing()
+
+        if not self.layer.startEditing():
+            print(f"편집 실패 원인: {self.layer.lastError()}")
+            print("레이어를 편집 모드로 전환하지 못했습니다")
+        else:
+            print("레이어를 편집 모드로 전환했습니다")
 
         if not self.layer.isEditable():
             print("not editable")
@@ -311,6 +373,15 @@ class PandapowerProvider(QgsVectorDataProvider):
         self.update_layer()
         print(f"Number of features in layer {self.type_layer_name}:  {self.layer.featureCount()}")
 
+    def capabilities(self):
+        # 프로바이더가 지원하는 모든 기능을 정의
+        return (QgsVectorDataProvider.AddFeatures |  # 피처 추가
+                QgsVectorDataProvider.DeleteFeatures |  # 피처 삭제
+                QgsVectorDataProvider.ChangeAttributeValues |  # 속성값 변경
+                QgsVectorDataProvider.AddAttributes |  # 속성 필드 추가
+                QgsVectorDataProvider.DeleteAttributes # 속성 필드 삭제
+        )
+
     def featureSource(self):
         return PandapowerFeatureSource(self)
 
@@ -353,12 +424,19 @@ class PandapowerProvider(QgsVectorDataProvider):
     def name():
         return "PandapowerProvider"
 
+    def crs(self):
+        return self.sourceCrs()
+
     def sourceCrs(self):
         crs = QgsCoordinateReferenceSystem.fromEpsgId(self.current_crs)
         if not crs.isValid():
             raise ValueError(f"CRS ID {self.current_crs} is not valid.")
         print(f"CRS is valid: {crs.authid()}") # Debugging
         return crs
+
+    def isValid(self):
+        """데이터 프로바이더의 유효성을 반환합니다"""
+        return self._is_valid
 
     @staticmethod
     def get_provider_name():
