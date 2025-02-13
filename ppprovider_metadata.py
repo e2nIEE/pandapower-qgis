@@ -1,6 +1,7 @@
 import re
 from typing import Dict
-from .ppprovider import PandapowerProvider
+#from .ppprovider import PandapowerProvider
+from .pandapower_provider import PandapowerProvider
 from qgis.core import QgsProviderMetadata, QgsReadWriteContext
 
 class PandapowerProviderMetadata(QgsProviderMetadata):

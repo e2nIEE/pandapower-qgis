@@ -227,13 +227,17 @@ def power_network(parent, file) -> None:
                     QgsProviderRegistry.instance().registerProvider(metadata)
                 '''
                 uri_parts = {
+                    #"net": net,
+                    #"type_layer_name": type_layer_name,
                     "path": r"C:\Users\slee\Documents\pp_old\mv_oberrhein_wgs.json", #str(file_path),
                     "network_type": obj["suffix"],
                     "geometry": "Point" if obj["suffix"] in ['bus', 'junction'] else "LineString",
-                    "epsg": str(current_crs)
+                    "epsg": str(current_crs),
+                    #"current_crs": current_crs
                 }
                 provider_metadata = QgsProviderRegistry.instance().providerMetadata("PandapowerProvider")
                 uri = provider_metadata.encodeUri(uri_parts)
+
 
                 # 네트워크 데이터를 컨테이너에 등록
                 network_data = {
@@ -246,9 +250,10 @@ def power_network(parent, file) -> None:
                 print("네트워크 호출완료!!!!!!!!!!!!!")
                 #print(network_data['net'])
 
+
                 layer = QgsVectorLayer(uri, type_layer_name, "PandapowerProvider")
                 print("qgsvectorlayer 호출!!!!!!!!!!!!!!!!!!")
-                layer.dataProvider().create_layers(layer) ################################
+                #layer.dataProvider().create_layers(layer) ################################
                 print("레이어 기능:", layer.dataProvider().capabilities())
 
                 provider_list = QgsProviderRegistry.instance().providerList()
