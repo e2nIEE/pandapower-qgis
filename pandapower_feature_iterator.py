@@ -20,6 +20,7 @@ class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
         self._provider  = source.get_provider()
         self._request = request
         self._index = 0
+        self._is_valid = False
 
         # 좌표계 변환 설정 - 판다파워에는 필요없을듯
         self._transform = QgsCoordinateTransform()
@@ -33,15 +34,17 @@ class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
 
         # 지오메트리 데이터 준비
         self.df_geodata = getattr(self._provider.net, f'{self._provider.network_type}_geodata')
-        if self.df_geodata is None:
-            return False
-        self.df_geodata.sort_index(inplace=True)
-
         # 메인 데이터프레임 준비
         self.df = self._provider.df
-        if self.df is None:
-            return False
-        self.df.sort_index(inplace=True)
+
+        # 유효성 검사는 추후 별도의 메서드나 플래그로 처리
+        self._is_valid = (self.df_geodata is not None and self.df is not None)
+
+        if self._is_valid:
+            self.df_geodata.sort_index(inplace=True)
+            self.df.sort_index(inplace=True)
+        else:
+            print("Warning: Dataframe is empty in PandapowerFeatureIterator.")
 
 
     def fetchFeature(self, feature: QgsFeature) -> bool:

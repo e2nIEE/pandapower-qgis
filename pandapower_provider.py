@@ -3,7 +3,7 @@
 from qgis.core import QgsVectorDataProvider, QgsVectorLayer, QgsFeature, QgsField, QgsFields, \
     QgsGeometry, QgsPointXY, QgsLineString, QgsWkbTypes, QgsProject, QgsCoordinateReferenceSystem, \
     QgsFeatureRequest, QgsFeatureIterator, QgsFeatureSource, QgsAbstractFeatureSource, QgsFeatureSink, \
-    QgsDataProvider, QgsProviderRegistry
+    QgsDataProvider, QgsProviderRegistry, QgsRectangle
 from qgis.PyQt.QtCore import QMetaType
 import json
 import pandas as pd
@@ -69,6 +69,7 @@ class PandapowerProvider(QgsVectorDataProvider):
         print("/////////////////////////net 값 뭔지 디버깅", self.net)
         self.type_layer_name = network_data['type_layer_name']
         print("/////////////////////////타입 레이어 네임 뭔지 디버깅", self.type_layer_name)
+        print("")
         if self.uri_parts['network_type'] not in ['bus', 'line', 'junction', 'pipe']:
             raise ValueError("Invalid network_type. Expected 'bus', 'line', 'junction', 'pipe'.")  # necessary?
         else:
@@ -76,19 +77,28 @@ class PandapowerProvider(QgsVectorDataProvider):
         self.current_crs = int(network_data['current_crs']) if network_data['current_crs'] else 4326
         self.crs = self.sourceCrs()
         self.vn_kv = None
-        self.fields_list = QgsFields()
+        #self.fields_list = QgsFields()
+        self.fields_list = None
+        #print(f"fields_list 초기 상태: 비어있음? {len(self.fields_list) == 0}")
         self.df = None
         #self.changed_feature_ids = set()
+        self._extent = None
 
         provider_list = QgsProviderRegistry.instance().providerList()
         print("provider list by init ppprovider", provider_list)
         self._is_valid = True
 
+        print("")
+        print("")
 
     def merge_df(self):
         """
         Merges the network type dataframe with its corresponding result dataframe.
         """
+        print("")
+        print("now in merge_df")
+        print("")
+
         try:
             # Get the dataframes for the network type and its result
             df_network_type = getattr(self.net, self.network_type)
@@ -150,7 +160,13 @@ class PandapowerProvider(QgsVectorDataProvider):
         테이블의 필드 정보를 반환합니다.
         지연 초기화(lazy initialization) 패턴을 사용하여 실제로 필요할 때만 데이터베이스를 조회합니다.
         """
-        if not self.fields_list:  # 첫 호출 시에만 데이터베이스를 조회합니다
+        #if not self.fields_list:  # 첫 호출 시에만 데이터베이스를 조회합니다
+        #print("length of self.fields_list: ", len(self.fields_list))
+        #if len(self.fields_list) == 0:  # 첫 호출 시에만 데이터베이스를 조회합니다
+        if not self.fields_list:
+            self.fields_list = QgsFields()
+
+            print("length is 0, merge df 호출중")
             self.merge_df()
 
             # Check if dataframe is empty
@@ -205,18 +221,68 @@ class PandapowerProvider(QgsVectorDataProvider):
         )
 
 
-    def crs(self):
+    def crs(self) -> QgsCoordinateReferenceSystem:
         return self.sourceCrs()
 
-    def sourceCrs(self):
+    def sourceCrs(self) -> QgsCoordinateReferenceSystem:
         crs = QgsCoordinateReferenceSystem.fromEpsgId(int(self.current_crs))
         if not crs.isValid():
             raise ValueError(f"CRS ID {self.current_crs} is not valid.")
         print(f"CRS is valid: {crs.authid()}") # Debugging
         return crs
 
-    def name(self):
+    @classmethod
+    def name(cls) -> str:
         return "PandapowerProvider"
+
+    @classmethod
+    def description(cls) -> str:
+        """Returns the memory provider description"""
+        return "PandapowerProvider"
+
+    def extent(self) -> QgsRectangle:
+        """Calculates the extent of the bend and returns a QgsRectangle"""
+        if not self._extent:
+            try:
+                min_x = float('inf')
+                max_x = float('-inf')
+                min_y = float('inf')
+                max_y = float('-inf')
+
+                df_geodata = getattr(self.net, f'{self.network_type}_geodata')
+                if df_geodata is None or df_geodata.empty:
+                    return QgsRectangle()
+
+                # Point geometry (bus/junction)
+                if self.network_type in ['bus', 'junction']:
+                    min_x = df_geodata['x'].min()
+                    max_x = df_geodata['x'].max()
+                    min_y = df_geodata['y'].min()
+                    max_y = df_geodata['y'].max()
+
+                # Line geometry (line/pipe)
+                elif self.network_type in ['line', 'pipe']:
+                    # 각 라인의 좌표들을 순회
+                    for _, row in df_geodata.iterrows():
+                        coords = row.get('coords', [])
+                        if coords:
+                            # coords는 이미 (x, y) 쌍의 리스트 형태
+                            for x, y in coords:
+                                min_x = min(min_x, x)
+                                max_x = max(max_x, x)
+                                min_y = min(min_y, y)
+                                max_y = max(max_y, y)
+
+                # 유효한 범위가 계산되었는지 확인
+                if min_x == float('inf') or max_x == float('-inf'):
+                    print("Warning: extent is infinite")
+                    return QgsRectangle()
+
+                return QgsRectangle(min_x, min_y, max_x, max_y)
+
+            except Exception as e:
+                self.pushError(f"Error calculating extent: {str(e)}")
+                return QgsRectangle()
 
     def featureCount(self):
         """
