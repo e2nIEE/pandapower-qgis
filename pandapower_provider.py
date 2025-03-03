@@ -61,14 +61,15 @@ class PandapowerProvider(QgsVectorDataProvider):
         network_data = NetworkContainer.get_network(uri)
         if network_data is None:
             self._is_valid = False
-            print("설마 너냐??????????????????????????????????????????????")
+            print("Warning: Failed to load Network data from Network container.\n")
             return
 
         # 네트워크 데이터 설정
         self.net = network_data['net']
-        print("/////////////////////////net 값 뭔지 디버깅", self.net)
+        print("\nnet 값 뭔지 디버깅", self.net)
+        self.vn_kv = network_data['vn_kv']
         self.type_layer_name = network_data['type_layer_name']
-        print("/////////////////////////타입 레이어 네임 뭔지 디버깅", self.type_layer_name)
+        print("타입 레이어 네임 뭔지 디버깅\n", self.type_layer_name)
         print("")
         if self.uri_parts['network_type'] not in ['bus', 'line', 'junction', 'pipe']:
             raise ValueError("Invalid network_type. Expected 'bus', 'line', 'junction', 'pipe'.")  # necessary?
@@ -76,7 +77,6 @@ class PandapowerProvider(QgsVectorDataProvider):
             self.network_type = self.uri_parts['network_type']
         self.current_crs = int(network_data['current_crs']) if network_data['current_crs'] else 4326
         self.crs = self.sourceCrs()
-        self.vn_kv = None
         #self.fields_list = QgsFields()
         self.fields_list = None
         #print(f"fields_list 초기 상태: 비어있음? {len(self.fields_list) == 0}")
@@ -94,9 +94,10 @@ class PandapowerProvider(QgsVectorDataProvider):
     def merge_df(self):
         """
         Merges the network type dataframe with its corresponding result dataframe.
+        Only includes data with matching vn_kv value.
         """
         print("")
-        print("now in merge_df")
+        print("\nnow in merge_df")
         print("")
 
         try:
@@ -118,6 +119,27 @@ class PandapowerProvider(QgsVectorDataProvider):
 
             print(f"Before sorting df_{self.network_type}\n", df_network_type.head())
             print(f"Before sorting df_res_{self.network_type}\n", df_res_network_type.head())
+            print(f"Original df_{self.network_type} shape: {df_network_type.shape}")
+            if df_res_network_type is not None:
+                print(f"Original df_res_{self.network_type} shape: {df_res_network_type.shape}")
+
+            # 정렬 전에 vn_kv 필터링
+            if self.vn_kv is not None:
+                # line, pipe의 경우 전체 출력
+                # network_type이 'bus'인 경우
+                if self.network_type == 'bus':
+                    filtered_indices = df_network_type[df_network_type['vn_kv'] == self.vn_kv].index
+                    df_network_type = df_network_type.loc[filtered_indices]
+                    if df_res_network_type is not None:
+                        df_res_network_type = df_res_network_type.loc[filtered_indices]
+                # network_type이 'junction'인 경우
+                elif self.network_type == 'junction':
+                    if 'vn_kv' in df_network_type.columns:
+                        filtered_indices = df_network_type[df_network_type['vn_kv'] == self.vn_kv].index
+                        df_network_type = df_network_type.loc[filtered_indices]
+                        if df_res_network_type is not None:
+                            df_res_network_type = df_res_network_type.loc[filtered_indices]
+                print(f"After filtering with vn_kv={self.vn_kv}, df_{self.network_type} shape: {df_network_type.shape}")
 
             # Sort indices
             df_network_type.sort_index(inplace=True)
@@ -147,8 +169,11 @@ class PandapowerProvider(QgsVectorDataProvider):
             self.df.insert(0, 'pp_type', self.network_type)
             self.df.insert(1, 'pp_index', self.df.index)
 
+            print("\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@self.df.index: ", self.df.index)
+
             print("Merged DataFrame (2):")  # Debugging
             print(self.df.head())
+            print("")
 
         except Exception as e:
             print(f"Error merging dataframes for {self.network_type}: {str(e)}")
@@ -210,16 +235,79 @@ class PandapowerProvider(QgsVectorDataProvider):
         )
 
 
+    def changeGeometryValues(self, geometry_map):
+        """
+        Changes geometries of existing features.
+
+        :param geometry_map: A QgsGeometryMap whose index contains the feature IDs
+            that will have their geometries changed.
+            The second map parameter being the new geometries themselves.
+        :type geometry_map: typedef QMap<QgsFeatureId, QgsGeometry> QgsGeometryMap
+        :return: True if geometries were changed successfully, False otherwise.
+        :rtype: bool
+        """
+        print("\nchangeGeometryValues")
+        print(f"Feature IDs in geometry_map: {list(geometry_map.keys())}")
+        print(f"Dataframe indices: {list(self.df.index)}")
+        print(f"Geodata indices: {list(getattr(self.net, f'{self.network_type}_geodata').index)}\n")
+        try:
+            for feature_id, new_geometry in geometry_map.items():
+                # 판다파워 네트워크의 지오데이터 업데이트
+                if self.network_type in ['bus', 'junction']:
+                    # 버스/정션의 경우 x, y 좌표 업데이트
+                    x = new_geometry.asPoint().x()
+                    y = new_geometry.asPoint().y()
+
+                    # 지오데이터 프레임 업데이트
+                    geodata_df = getattr(self.net, f'{self.network_type}_geodata')
+                    if feature_id in geodata_df.index:
+                        geodata_df.at[feature_id, 'x'] = x
+                        geodata_df.at[feature_id, 'y'] = y
+                        print(f"Updated {self.network_type} geometry at ID {feature_id}: ({x}, {y})")
+                    else:
+                        print(f"Warning: {self.network_type} with ID {feature_id} not found in geodata")
+
+                elif self.network_type in ['line', 'pipe']:
+                    # 라인/파이프의 경우 좌표 목록 업데이트
+                    points = new_geometry.asPolyline()
+                    coords = [(point.x(), point.y()) for point in points]
+
+                    # 지오데이터 프레임 업데이트
+                    geodata_df = getattr(self.net, f'{self.network_type}_geodata')
+                    if feature_id in geodata_df.index:
+                        geodata_df.at[feature_id, 'coords'] = coords
+                        print(f"Updated {self.network_type} geometry at ID {feature_id} with {len(coords)} points")
+                    else:
+                        print(f"Warning: {self.network_type} with ID {feature_id} not found in geodata")
+
+            # 변경 사항 알림을 보내기 위한 signal 발생
+            # 이는 QGIS가 데이터 변경을 인식하고 화면을 다시 그리도록 하는 중요한 단계
+            self.dataChanged.emit()
+            # 캐시 무효화 시도 (이 메서드가 있다면)
+            if hasattr(self, 'cacheInvalidate'):
+                self.cacheInvalidate()
+            # 레이어 명시적 갱신 시도
+            try:
+                # 레이어 객체 찾기
+                layers = QgsProject.instance().mapLayersByName(self.type_layer_name)
+                if layers:
+                    # 명시적 리페인트 트리거
+                    layers[0].triggerRepaint()
+                    print(f"Triggered repaint for layer: {self.type_layer_name}")
+            except Exception as e:
+                print(f"Warning: Could not trigger layer repaint: {str(e)}")
+            return True
+        except Exception as e:
+            self.pushError(f"Failed to change geometries: {str(e)}")
+            return False
+
+
     def capabilities(self) -> QgsVectorDataProvider.Capabilities:
         return (
-            #QgsVectorDataProvider.CreateSpatialIndex | QgsVectorDataProvider.SelectAtId |
-            QgsVectorDataProvider.AddFeatures |  # 피처 추가
-            QgsVectorDataProvider.DeleteFeatures |  # 피처 삭제
-            QgsVectorDataProvider.ChangeAttributeValues |  # 속성값 변경
-            QgsVectorDataProvider.AddAttributes |  # 속성 필드 추가
-            QgsVectorDataProvider.DeleteAttributes  # 속성 필드 삭제
+            QgsVectorDataProvider.CreateSpatialIndex |
+            QgsVectorDataProvider.SelectAtId |
+            QgsVectorDataProvider.ChangeGeometries
         )
-
 
     def crs(self) -> QgsCoordinateReferenceSystem:
         return self.sourceCrs()

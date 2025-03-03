@@ -211,21 +211,7 @@ def power_network(parent, file) -> None:
 
                 provider_list = QgsProviderRegistry.instance().providerList()
                 print("Registered providers:", provider_list, "before ---------------------------")
-                '''
-                # uri = f"pandapower:{type_layer_name}"
-                uri = "C:/Users/slee/Documents/pp_old/mv_oberrhein_wgs.json"
-                if "PandapowerProvider" not in QgsProviderRegistry.instance().providerList():
-                    metadata = QgsProviderMetadata(
-                        "PandapowerProvider",  # identifier
-                        "Pandapower Provider for pandapower QGIS Plugin",  # description
-                        #lambda uri, providerOptions, flags: PandapowerProvider(net, type_layer_name, network_type=obj['suffix'], current_crs=current_crs, uri=None)
-                            # no more recommended constructor
-                        #"pandapower_qgis"  # uri
-                        #"ppprovider"    # uri
-                        uri # or net?
-                    )
-                    QgsProviderRegistry.instance().registerProvider(metadata)
-                '''
+
                 uri_parts = {
                     #"net": net,
                     #"type_layer_name": type_layer_name,
@@ -242,45 +228,30 @@ def power_network(parent, file) -> None:
                 # 네트워크 데이터를 컨테이너에 등록
                 network_data = {
                     'net': net,
+                    #'net': obj,
+                    'vn_kv': vn_kv,
                     'type_layer_name': type_layer_name,
                     'network_type': obj['suffix'],
                     'current_crs': current_crs
                 }
                 NetworkContainer.register_network(uri, network_data)
-                print("네트워크 호출완료!!!!!!!!!!!!!")
+                print("Network registerd.")
                 #print(network_data['net'])
 
 
                 layer = QgsVectorLayer(uri, type_layer_name, "PandapowerProvider")
-                print("qgsvectorlayer 호출!!!!!!!!!!!!!!!!!!")
-                #layer.dataProvider().create_layers(layer) ################################
-                print("레이어 기능:", layer.dataProvider().capabilities())
 
+                print("\nQgsvectorlayer created.")
+                #print("Capabilities of layer: ", layer.dataProvider().capabilities()) #왜 안되지???
                 provider_list = QgsProviderRegistry.instance().providerList()
-                print("Registered providers:", provider_list, "after ------------------------------")
+                print("Registered providers: ", provider_list, "after ------------\n")
 
-
-                '''
-                #provider = PandapowerProvider(net, type_layer_name, network_type=obj['suffix'], current_crs=current_crs, uri=None) #
-                data_source = None
-                options = {
-                    "net": net,
-                    "type_layer_name": type_layer_name,
-                    "network_type": obj["suffix"],
-                    "current_crs": current_crs,
-                    "uri": None
-                }
-                provider = QgsProviderRegistry.instance().createProvider("PandapowerProvider", data_source, options, flags=None)
-
-                provider = PandapowerProvider(uri)
-                provider.create_layers()
-                layer = provider.layer
-                '''
                 layer.setRenderer(obj['renderer'])
                 # add layer to group
                 QgsProject.instance().addMapLayer(layer, False)
                 group.addLayer(layer)
                 # provider.update_layer()
+                print(f"\n{type_layer_name} layer is editable? {layer.isEditable()} @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
 
                 # Debugging: Check if layer is added to the project
                 if QgsProject.instance().mapLayersByName(type_layer_name):
@@ -295,7 +266,7 @@ def power_network(parent, file) -> None:
                 print(f"CRS Name: {project_crs.description()}")
                 # CRS의 WKT(Well-Known Text) 표현 출력
                 print(f"CRS WKT: {project_crs.toWkt()}")
-                print(f"Current layer crs: {current_crs}")
+                print(f"Current layer crs: {current_crs}\n")
 
             if buses or lines:
                 # Move layers above TileLayer

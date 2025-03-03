@@ -13,18 +13,18 @@ if 'network_container' not in sys.modules:
                 cls._initialized = True
             cls._services[uri] = dict(network_data)
             #cls._services[uri] = network_data
-            print(f"Registering network with uri: {uri}/////////////////////////////////////////////////")
-            print(f"Available uris: {list(cls._services.keys())}!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-            print("initialized in registry????????????????????????????????????????????", cls._initialized)
-            print(f"Register: NetworkContainer at {id(cls)}@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+            print(f"\nRegistering network with uri: {uri}")
+            print(f"Available uris: {list(cls._services.keys())}")
+            print("initialized in registry? ", cls._initialized)
+            print(f"Register: NetworkContainer at {id(cls)}\n")
 
         @classmethod
         def get_network(cls, uri):
             """등록된 네트워크 데이터를 가져옵니다"""
-            print(f"Getting network with uri: {uri}/////////////////////////////////////////////////////////")
-            print(f"Available uris: {list(cls._services.keys())}!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-            print("initialized in get method????????????????????????????????????????????", cls._initialized)
-            print(f"Get: NetworkContainer at {id(cls)}@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+            print(f"\nGetting network with uri: {uri}")
+            print(f"Available uris: {list(cls._services.keys())}")
+            print("initialized in get method? ", cls._initialized)
+            print(f"Get: NetworkContainer at {id(cls)}\n")
             if uri in cls._services:
                 return cls._services[uri]
             return None

@@ -9,12 +9,13 @@ from . import pandapower_feature_source
 #from .pandapower_provider import PandapowerProvider
 
 import pandas as pd
+import numpy as np
 
 class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
     def __init__(self, source: pandapower_feature_source.PandapowerFeatureSource, request: QgsFeatureRequest):
         """
-        피처 이터레이터를 초기화합니다. 이 클래스는 판다파워의 데이터프레임을
-        QGIS 피처로 변환하는 핵심 로직을 담당합니다.
+        Initialize the feature iterator.
+        This class is responsible for the core logic of converting a pandapower dataframe into QGIS features.
         """
         super().__init__(request)
         self._provider  = source.get_provider()
@@ -32,9 +33,9 @@ class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
                 request.transformContext()      # 변환 컨텍스트
             )
 
-        # 지오메트리 데이터 준비
+        # Prepare geometry data
         self.df_geodata = getattr(self._provider.net, f'{self._provider.network_type}_geodata')
-        # 메인 데이터프레임 준비
+        # Prepare main dataframe
         self.df = self._provider.df
 
         # 유효성 검사는 추후 별도의 메서드나 플래그로 처리
@@ -56,58 +57,93 @@ class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
         :return: True if success
         :rtype: bool
         """
-        # 더 이상 처리할 행이 없으면 종료
+        # Exit if there are no more rows to process
         if self._index >= len(self.df):
             return False
 
-        # 현재 행 가져오기
+        # Get the current row
         idx = self.df.index[self._index]
         row = self.df.iloc[self._index]
 
-        # 피처 기본 설정
+        # Feature default settings
         feature.setFields(self._provider.fields())
         feature.setValid(True)
 
-        # 지오메트리 설정
+        # Geometry settings
+        has_valid_geometry = False
         if idx in self.df_geodata.index:
             row_geo = self.df_geodata.loc[idx]
 
             if self._provider.network_type in ['bus', 'junction']:
-                # 포인트 지오메트리 생성
+                # Create point geometry
                 x = row_geo.get('x', 0)
                 y = row_geo.get('y', 0)
                 geometry = QgsGeometry.fromPointXY(QgsPointXY(x, y))
                 feature.setGeometry(geometry)
-                if x == 0 or y == 0:
+                has_valid_geometry = (x != 0 or y != 0)
+                if not has_valid_geometry:
                     print(f"Warning: No coordinates found for {self._provider.network_type} index {idx}")
 
+                # Apply coordinate transformation
+                if has_valid_geometry and not self._transform.isShortCircuited():
+                    self.geometryToDestinationCrs(feature, self._transform)
+
+                # Spatial filter to select features from the layer
+                # Apply spatial filter to point layer
+                filter_rect = self.filterRectToSourceCrs(self._transform)
+                if has_valid_geometry and not filter_rect.isNull():
+                    # Check if filter_rect intersects with feature.geometry
+                    # skip if they do not intersect
+                    if not filter_rect.contains(feature.geometry().asPoint()):
+                        self._index += 1
+                        return self.fetchFeature(feature)
+
             elif self._provider.network_type in ['line', 'pipe']:
-                # 라인 지오메트리 생성
+                # Create line geometry
                 coords = row_geo.get('coords', [])
                 if coords:
                     points = [QgsPointXY(x, y) for x, y in coords]
                     geometry = QgsGeometry(QgsLineString(points))
                     feature.setGeometry(geometry)
+                    has_valid_geometry = True
                 else:
                     print(f"Warning: No coordinates found for {self._provider.network_type} index {idx}")
 
-            # 좌표계 변환 적용
-            if not self._transform.isShortCircuited():
-                self.geometryToDestinationCrs(feature, self._transform)
+                # 좌표계 변환 적용
+                if has_valid_geometry and not self._transform.isShortCircuited():
+                    self.geometryToDestinationCrs(feature, self._transform)
 
-        # 피처에 속성값 설정
+                # Spatial filter to select features from the layer
+                # 라인 레이어에 대한 공간 필터 적용
+                filter_rect = self.filterRectToSourceCrs(self._transform)
+                if not filter_rect.isNull():
+                    # 공간 연산을 위해 filter_rect를 qgsgeometry 객체로 변환
+                    filter_geom = QgsGeometry.fromRect(filter_rect)
+                    # 교차 여부 확인
+                    if not feature.geometry().intersects(filter_geom):
+                        # 교차하지 않으면 거리 기반 근접성 확인
+                        distance = feature.geometry().distance(filter_geom)
+                        # 허용 오차 설정 (지도 스케일에 따라 조정 필요)
+                        tolerance = 0.00001  # 약 1m 정도의 허용 오차
+                        # 오차 범위를 넘으면 건너뜀
+                        if distance > tolerance:
+                            self._index += 1
+                            return self.fetchFeature(feature)
+
+        # Set attribute values for the feature
         attributes = []
         for field in self._provider.fields():
             value = row.get(field.name(), None)
             if pd.isna(value):
                 value = None
+            elif isinstance(value, (bool, np.bool_)):  # handle numpy.bool_ type of pandas
+                value = bool(value)  # Explicit conversion to Python native bool
             attributes.append(value)
         feature.setAttributes(attributes)
 
-        # 피처 ID 설정
+        # Set feature id
         feature.setId(idx) # 추측: df의 index = pp_index, 즉 둘은 동일하며 비연속, 따라서 id는 유용
 
-        # 인덱스 증가
         self._index += 1
         return True
 
@@ -128,12 +164,12 @@ class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
 
 
     def rewind(self) -> bool:
-        """이터레이터를 처음으로 되돌립니다"""
+        """Reset the iterator to the beginning"""
         self._index = 0
         return True
 
 
     def close(self) -> bool:
-        """이터레이터를 종료하고 정리합니다"""
+        """Terminate and clean up the iterator"""
         self._index = -1
         return True
