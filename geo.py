@@ -88,11 +88,11 @@ def dump_to_geojson(net, nodes=False, branches=False):
     """
     is_pandapower = net.__class__.__name__ == 'pandapowerNet'
     if is_pandapower:
-        node_geodata = net.bus_geodata
-        branch_geodata = net.line_geodata
+        node_geodata = net.bus.geo
+        branch_geodata = net.line.geo
     else:
-        node_geodata = net.junction_geodata
-        branch_geodata = net.pipe_geodata
+        node_geodata = net.junction.geo
+        branch_geodata = net.pipe.geo
 
     if not geojson_INSTALLED:
         soft_dependency_error(str(sys._getframe().f_code.co_name) + "()", "geojson")

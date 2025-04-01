@@ -34,7 +34,8 @@ class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
             )
 
         # Prepare geometry data
-        self.df_geodata = getattr(self._provider.net, f'{self._provider.network_type}_geodata')
+        # self.df_geodata = getattr(self._provider.net, f'{self._provider.network_type}_geodata')
+        self.df_geodata = getattr(self._provider.net, f'{self._provider.network_type}').geo
         # Prepare main dataframe
         self.df = self._provider.df
 

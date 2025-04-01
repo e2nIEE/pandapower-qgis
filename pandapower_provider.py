@@ -44,32 +44,32 @@ def convert_dtype_to_qmetatype(dtype):
 class PandapowerProvider(QgsVectorDataProvider):
     @classmethod
     def createProvider(cls, uri, providerOptions = QgsDataProvider.ProviderOptions(), flags = QgsDataProvider.ReadFlags()):
-        """프로바이더 인스턴스를 생성하는 팩토리 메서드"""
+        """Factory methode that create provider instance"""
         return PandapowerProvider(uri, providerOptions, flags)
 
 
     def __init__(self, uri = "", providerOptions = QgsDataProvider.ProviderOptions(), flags = QgsDataProvider.ReadFlags()):
         super().__init__(uri)
-        # 레지스트리에서 메타데이터 인스턴스 가져오기
+        # Bring metadata instace from registry
         metadata_provider = QgsProviderRegistry.instance().providerMetadata("PandapowerProvider")
         self.uri = uri
         self.uri_parts = metadata_provider.decodeUri(uri)
         self._provider_options = providerOptions
         self._flags = flags
 
-        # 컨테이너에서 네트워크 데이터 가져오기
+        # Bring network data from container
         network_data = NetworkContainer.get_network(uri)
         if network_data is None:
             self._is_valid = False
             print("Warning: Failed to load Network data from Network container.\n")
             return
 
-        # 네트워크 데이터 설정
+        # Setting network data
         self.net = network_data['net']
-        print("\nnet 값 뭔지 디버깅", self.net)
+        print("\nvalue of net: ", self.net)
         self.vn_kv = network_data['vn_kv']
         self.type_layer_name = network_data['type_layer_name']
-        print("타입 레이어 네임 뭔지 디버깅\n", self.type_layer_name)
+        print("type of layer name: \n", self.type_layer_name)
         print("")
         if self.uri_parts['network_type'] not in ['bus', 'line', 'junction', 'pipe']:
             raise ValueError("Invalid network_type. Expected 'bus', 'line', 'junction', 'pipe'.")  # necessary?
@@ -123,16 +123,14 @@ class PandapowerProvider(QgsVectorDataProvider):
             if df_res_network_type is not None:
                 print(f"Original df_res_{self.network_type} shape: {df_res_network_type.shape}")
 
-            # 정렬 전에 vn_kv 필터링
+            # Filter vn_kv before sort
             if self.vn_kv is not None:
-                # line, pipe의 경우 전체 출력
-                # network_type이 'bus'인 경우
+                # If line, pipe: merge all
                 if self.network_type == 'bus':
                     filtered_indices = df_network_type[df_network_type['vn_kv'] == self.vn_kv].index
                     df_network_type = df_network_type.loc[filtered_indices]
                     if df_res_network_type is not None:
                         df_res_network_type = df_res_network_type.loc[filtered_indices]
-                # network_type이 'junction'인 경우
                 elif self.network_type == 'junction':
                     if 'vn_kv' in df_network_type.columns:
                         filtered_indices = df_network_type[df_network_type['vn_kv'] == self.vn_kv].index
@@ -152,8 +150,7 @@ class PandapowerProvider(QgsVectorDataProvider):
             # Check if the result dataframe exists
             if df_res_network_type is not None:
                 # Merge the two dataframes on their indices
-                self.df = pd.merge(df_network_type, df_res_network_type, left_index=True, right_index=True,
-                                       suffixes=('', '_res'))
+                self.df = pd.merge(df_network_type, df_res_network_type, left_index=True, right_index=True, suffixes=('', '_res'))
                 print("Merged DataFrame (1):") # Debugging
                 print(self.df.head())
             else:
@@ -184,6 +181,8 @@ class PandapowerProvider(QgsVectorDataProvider):
         """
         테이블의 필드 정보를 반환합니다.
         지연 초기화(lazy initialization) 패턴을 사용하여 실제로 필요할 때만 데이터베이스를 조회합니다.
+        Return field data of table
+        Using lazy initialization pattern, search database only when it needed.
         """
         #if not self.fields_list:  # 첫 호출 시에만 데이터베이스를 조회합니다
         #print("length of self.fields_list: ", len(self.fields_list))
@@ -191,7 +190,7 @@ class PandapowerProvider(QgsVectorDataProvider):
         if not self.fields_list:
             self.fields_list = QgsFields()
 
-            print("length is 0, merge df 호출중")
+            print("length is 0, called merge df")
             self.merge_df()
 
             # Check if dataframe is empty
@@ -249,17 +248,19 @@ class PandapowerProvider(QgsVectorDataProvider):
         print("\nchangeGeometryValues")
         print(f"Feature IDs in geometry_map: {list(geometry_map.keys())}")
         print(f"Dataframe indices: {list(self.df.index)}")
-        print(f"Geodata indices: {list(getattr(self.net, f'{self.network_type}_geodata').index)}\n")
+        #print(f"Geodata indices: {list(getattr(self.net, f'{self.network_type}_geodata').index)}\n")
+        print(f"Geodata indices: {list(getattr(self.net, f'{self.network_type}').geo.index)}\n")
         try:
+            # Update Geodata of Pandapower Network
             for feature_id, new_geometry in geometry_map.items():
-                # 판다파워 네트워크의 지오데이터 업데이트
                 if self.network_type in ['bus', 'junction']:
-                    # 버스/정션의 경우 x, y 좌표 업데이트
+                    # If bus or junction, update x, y geometry
                     x = new_geometry.asPoint().x()
                     y = new_geometry.asPoint().y()
 
-                    # 지오데이터 프레임 업데이트
-                    geodata_df = getattr(self.net, f'{self.network_type}_geodata')
+                    # Update geodata of dataframe
+                    #geodata_df = getattr(self.net, f'{self.network_type}_geodata')
+                    geodata_df = getattr(self.net, f'{self.network_type}').geo
                     if feature_id in geodata_df.index:
                         geodata_df.at[feature_id, 'x'] = x
                         geodata_df.at[feature_id, 'y'] = y
@@ -268,17 +269,22 @@ class PandapowerProvider(QgsVectorDataProvider):
                         print(f"Warning: {self.network_type} with ID {feature_id} not found in geodata")
 
                 elif self.network_type in ['line', 'pipe']:
-                    # 라인/파이프의 경우 좌표 목록 업데이트
+                    # If line or pipe, update coord list
                     points = new_geometry.asPolyline()
                     coords = [(point.x(), point.y()) for point in points]
 
-                    # 지오데이터 프레임 업데이트
-                    geodata_df = getattr(self.net, f'{self.network_type}_geodata')
+                    # Update geodata of dataframe
+                    #geodata_df = getattr(self.net, f'{self.network_type}_geodata')
+                    geodata_df = getattr(self.net, f'{self.network_type}').geo
                     if feature_id in geodata_df.index:
                         geodata_df.at[feature_id, 'coords'] = coords
                         print(f"Updated {self.network_type} geometry at ID {feature_id} with {len(coords)} points")
                     else:
                         print(f"Warning: {self.network_type} with ID {feature_id} not found in geodata")
+            # 변경된 좌표를 원본 파일에 반영 # 메서드 마지막에 레이어 다시 그린 다음에 하는 게 맞아보이는데 일단 고
+            # 투두: 수동 저장 옵션
+            if self.update_geodata_in_json():
+                print(f"좌표 변경 사항이 '{self.uri_parts.get('path', '')}'에 저장되었습니다")
 
             # 변경 사항 알림을 보내기 위한 signal 발생
             # 이는 QGIS가 데이터 변경을 인식하고 화면을 다시 그리도록 하는 중요한 단계
@@ -299,6 +305,71 @@ class PandapowerProvider(QgsVectorDataProvider):
             return True
         except Exception as e:
             self.pushError(f"Failed to change geometries: {str(e)}")
+            return False
+
+
+    def update_geodata_in_json(self):
+        """
+        Update changed geodata of original json file with pandapower API.
+        """
+        try:
+            import pandapower as pp
+            import os
+            import shutil
+            from datetime import datetime
+
+            original_path = self.uri_parts.get('path', '')
+            if not original_path or not os.path.exists(original_path):
+                self.pushError(f"Cannot find original file at: {original_path}")
+                return False
+
+            # 백업 파일 생성 (날짜/시간 스탬프 추가)
+            backup_path = f"{original_path}.{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak"
+            try:
+                shutil.copy2(original_path, backup_path)
+                print(f"백업 파일이 생성되었습니다: {backup_path}")
+            except Exception as e:
+                print(f"백업 파일 생성 중 오류 발생: {str(e)}")
+                # continue
+
+            # Load original network from json
+            original_net = pp.from_json(original_path)
+
+            # Changed geodata of current memory
+            #current_geodata = getattr(self.net, f"{self.network_type}_geodata")
+            current_geodata = getattr(self.net, f"{self.network_type}").geo
+
+            # Update geodata of original network as changed coordinate
+            # Only filtered data considered
+            #original_geodata = getattr(original_net, f"{self.network_type}_geodata")
+            original_geodata = getattr(original_net, f"{self.network_type}").geo
+
+            for idx in current_geodata.index:
+                if idx in original_geodata.index:
+                    if self.network_type in ['bus', 'junction']:
+                        if 'x' in current_geodata.columns and 'y' in current_geodata.columns:
+                            original_geodata.at[idx, 'x'] = current_geodata.at[idx, 'x']
+                            original_geodata.at[idx, 'y'] = current_geodata.at[idx, 'y']
+                    elif self.network_type in ['line', 'pipe']:
+                        if 'coords' in current_geodata.columns:
+                            original_geodata.at[idx, 'coords'] = current_geodata.at[idx, 'coords']
+
+            # Save updated network to json
+            try:
+                pp.to_json(original_net, original_path)
+                print(f"좌표 변경 사항이 저장되었습니다: {original_path}")
+                return True
+            except PermissionError:
+                self.pushError(f"파일에 접근할 수 없습니다. 파일이 다른 프로그램에서 열려있거나 쓰기 권한이 없습니다: {original_path}")
+                return False
+            except Exception as e:
+                self.pushError(f"파일 저장 중 오류 발생: {str(e)}")
+                return False
+
+        except Exception as e:
+            self.pushError(f"Error occurs while updating geodata: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return False
 
 
@@ -337,7 +408,8 @@ class PandapowerProvider(QgsVectorDataProvider):
                 min_y = float('inf')
                 max_y = float('-inf')
 
-                df_geodata = getattr(self.net, f'{self.network_type}_geodata')
+                #df_geodata = getattr(self.net, f'{self.network_type}_geodata')
+                df_geodata = getattr(self.net, f'{self.network_type}').geo
                 if df_geodata is None or df_geodata.empty:
                     return QgsRectangle()
 
@@ -350,18 +422,18 @@ class PandapowerProvider(QgsVectorDataProvider):
 
                 # Line geometry (line/pipe)
                 elif self.network_type in ['line', 'pipe']:
-                    # 각 라인의 좌표들을 순회
+                    # Iterate through the coordinates of each line
                     for _, row in df_geodata.iterrows():
                         coords = row.get('coords', [])
                         if coords:
-                            # coords는 이미 (x, y) 쌍의 리스트 형태
+                            # coords is already in the form of a list of (x, y) pairs
                             for x, y in coords:
                                 min_x = min(min_x, x)
                                 max_x = max(max_x, x)
                                 min_y = min(min_y, y)
                                 max_y = max(max_y, y)
 
-                # 유효한 범위가 계산되었는지 확인
+                # Check if the valid range has been calculated
                 if min_x == float('inf') or max_x == float('-inf'):
                     print("Warning: extent is infinite")
                     return QgsRectangle()
@@ -389,7 +461,9 @@ class PandapowerProvider(QgsVectorDataProvider):
         return pandapower_feature_source.PandapowerFeatureSource(self)
 
     def isValid(self):
-        """데이터 프로바이더의 유효성을 반환합니다"""
+        """
+        Return the validity of the data provider.
+        """
         return self._is_valid
 
     def storageType(self):

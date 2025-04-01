@@ -215,7 +215,8 @@ def power_network(parent, file) -> None:
                 uri_parts = {
                     #"net": net,
                     #"type_layer_name": type_layer_name,
-                    "path": r"C:\Users\slee\Documents\pp_old\mv_oberrhein_wgs.json", #str(file_path),
+                    #"path": r"C:\Users\slee\Documents\pp_old\mv_oberrhein_wgs - Kopie.json", #str(file_path),
+                    "path": file,
                     "network_type": obj["suffix"],
                     "geometry": "Point" if obj["suffix"] in ['bus', 'junction'] else "LineString",
                     "epsg": str(current_crs),
@@ -225,7 +226,7 @@ def power_network(parent, file) -> None:
                 uri = provider_metadata.encodeUri(uri_parts)
 
 
-                # 네트워크 데이터를 컨테이너에 등록
+                # Register network data to container
                 network_data = {
                     'net': net,
                     #'net': obj,
