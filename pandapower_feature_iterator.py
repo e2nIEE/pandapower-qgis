@@ -10,6 +10,7 @@ from . import pandapower_feature_source
 
 import pandas as pd
 import numpy as np
+import json
 
 class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
     def __init__(self, source: pandapower_feature_source.PandapowerFeatureSource, request: QgsFeatureRequest):
@@ -36,8 +37,14 @@ class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
         # Prepare geometry data
         # self.df_geodata = getattr(self._provider.net, f'{self._provider.network_type}_geodata')
         self.df_geodata = getattr(self._provider.net, f'{self._provider.network_type}').geo
+        #self.df_geodata2 = self._provider.net.bus.geo
+        #print("current network type: ", self._provider.network_type, "\n")
+        #print(".geo head: ", self.df_geodata.head, "\n")
+        #print("net.bus.geo head", self.df_geodata2.head, "\n")
+
         # Prepare main dataframe
         self.df = self._provider.df
+        #print("self.df .head", self.df, "\n\n\n")
 
         # 유효성 검사는 추후 별도의 메서드나 플래그로 처리
         self._is_valid = (self.df_geodata is not None and self.df is not None)
@@ -73,63 +80,75 @@ class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
         # Geometry settings
         has_valid_geometry = False
         if idx in self.df_geodata.index:
-            row_geo = self.df_geodata.loc[idx]
+            #print("network type: ", self._provider.network_type, "\n")
+            #raw_geo = self.df_geodata.loc[idx]
+            #print(f"Raw data for idx {idx}: {raw_geo}\n")
+            row_geo = json.loads(self.df_geodata.loc[idx])
+            #print(f"Parsed data structure: {type(row_geo)}, content: {row_geo}\n")
+            try:
+                if self._provider.network_type in ['bus', 'junction']:
+                    if 'coordinates' in row_geo and isinstance(row_geo['coordinates'], list) and len(row_geo['coordinates']) >= 2:
+                        # Create point geometry
+                        #x = row_geo.get('x', 0)
+                        #y = row_geo.get('y', 0)
+                        x = row_geo['coordinates'][0]
+                        y = row_geo['coordinates'][1]
+                        geometry = QgsGeometry.fromPointXY(QgsPointXY(x, y))
+                        feature.setGeometry(geometry)
+                        has_valid_geometry = (x != 0 or y != 0)
+                    else:
+                        print(f"Warning: Invalid coordinates structure for {self._provider.network_type} index {idx}")
 
-            if self._provider.network_type in ['bus', 'junction']:
-                # Create point geometry
-                x = row_geo.get('x', 0)
-                y = row_geo.get('y', 0)
-                geometry = QgsGeometry.fromPointXY(QgsPointXY(x, y))
-                feature.setGeometry(geometry)
-                has_valid_geometry = (x != 0 or y != 0)
-                if not has_valid_geometry:
-                    print(f"Warning: No coordinates found for {self._provider.network_type} index {idx}")
+                    if not has_valid_geometry:
+                        print(f"Warning: No coordinates found for {self._provider.network_type} index {idx}")
 
-                # Apply coordinate transformation
-                if has_valid_geometry and not self._transform.isShortCircuited():
-                    self.geometryToDestinationCrs(feature, self._transform)
+                    # Apply coordinate transformation
+                    if has_valid_geometry and not self._transform.isShortCircuited():
+                        self.geometryToDestinationCrs(feature, self._transform)
 
-                # Spatial filter to select features from the layer
-                # Apply spatial filter to point layer
-                filter_rect = self.filterRectToSourceCrs(self._transform)
-                if has_valid_geometry and not filter_rect.isNull():
-                    # Check if filter_rect intersects with feature.geometry
-                    # skip if they do not intersect
-                    if not filter_rect.contains(feature.geometry().asPoint()):
-                        self._index += 1
-                        return self.fetchFeature(feature)
-
-            elif self._provider.network_type in ['line', 'pipe']:
-                # Create line geometry
-                coords = row_geo.get('coords', [])
-                if coords:
-                    points = [QgsPointXY(x, y) for x, y in coords]
-                    geometry = QgsGeometry(QgsLineString(points))
-                    feature.setGeometry(geometry)
-                    has_valid_geometry = True
-                else:
-                    print(f"Warning: No coordinates found for {self._provider.network_type} index {idx}")
-
-                # 좌표계 변환 적용
-                if has_valid_geometry and not self._transform.isShortCircuited():
-                    self.geometryToDestinationCrs(feature, self._transform)
-
-                # Spatial filter to select features from the layer
-                # 라인 레이어에 대한 공간 필터 적용
-                filter_rect = self.filterRectToSourceCrs(self._transform)
-                if not filter_rect.isNull():
-                    # 공간 연산을 위해 filter_rect를 qgsgeometry 객체로 변환
-                    filter_geom = QgsGeometry.fromRect(filter_rect)
-                    # 교차 여부 확인
-                    if not feature.geometry().intersects(filter_geom):
-                        # 교차하지 않으면 거리 기반 근접성 확인
-                        distance = feature.geometry().distance(filter_geom)
-                        # 허용 오차 설정 (지도 스케일에 따라 조정 필요)
-                        tolerance = 0.00001  # 약 1m 정도의 허용 오차
-                        # 오차 범위를 넘으면 건너뜀
-                        if distance > tolerance:
+                    # Spatial filter to select features from the layer
+                    # Apply spatial filter to point layer
+                    filter_rect = self.filterRectToSourceCrs(self._transform)
+                    if has_valid_geometry and not filter_rect.isNull():
+                        # Check if filter_rect intersects with feature.geometry
+                        # skip if they do not intersect
+                        if not filter_rect.contains(feature.geometry().asPoint()):
                             self._index += 1
                             return self.fetchFeature(feature)
+
+                if self._provider.network_type in ['line', 'pipe']:
+                    # Create line geometry
+                    coords = row_geo.get('coordinates', [])
+                    if coords:
+                        points = [QgsPointXY(x, y) for x, y in coords]
+                        geometry = QgsGeometry(QgsLineString(points))
+                        feature.setGeometry(geometry)
+                        has_valid_geometry = True
+                    else:
+                        print(f"Warning: No coordinates found for {self._provider.network_type} index {idx}")
+
+                    # 좌표계 변환 적용
+                    if has_valid_geometry and not self._transform.isShortCircuited():
+                        self.geometryToDestinationCrs(feature, self._transform)
+
+                    # Spatial filter to select features from the layer
+                    # 라인 레이어에 대한 공간 필터 적용
+                    filter_rect = self.filterRectToSourceCrs(self._transform)
+                    if not filter_rect.isNull():
+                        # 공간 연산을 위해 filter_rect를 qgsgeometry 객체로 변환
+                        filter_geom = QgsGeometry.fromRect(filter_rect)
+                        # 교차 여부 확인
+                        if not feature.geometry().intersects(filter_geom):
+                            # 교차하지 않으면 거리 기반 근접성 확인
+                            distance = feature.geometry().distance(filter_geom)
+                            # 허용 오차 설정 (지도 스케일에 따라 조정 필요)
+                            tolerance = 0.00001  # 약 1m 정도의 허용 오차
+                            # 오차 범위를 넘으면 건너뜀
+                            if distance > tolerance:
+                                self._index += 1
+                                return self.fetchFeature(feature)
+            except Exception as e:
+                print(f"Error processing {self._provider.network_type} index {idx}: {str(e)}")
 
         # Set attribute values for the feature
         attributes = []

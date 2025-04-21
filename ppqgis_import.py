@@ -30,6 +30,7 @@ from qgis.core import QgsProject, QgsVectorLayer, QgsApplication, \
 
 from .ppprovider import PandapowerProvider
 from .network_container import NetworkContainer
+from .pandapower_maptip import MapTipUtils
 
 # constants for color ramps
 BUS_LOW_COLOR = "#ccff00"  # lime
@@ -236,7 +237,7 @@ def power_network(parent, file) -> None:
                     'current_crs': current_crs
                 }
                 NetworkContainer.register_network(uri, network_data)
-                print("Network registerd.")
+                print("Network registered.")
                 #print(network_data['net'])
 
 
@@ -251,7 +252,10 @@ def power_network(parent, file) -> None:
                 # add layer to group
                 QgsProject.instance().addMapLayer(layer, False)
                 group.addLayer(layer)
-                # provider.update_layer()
+
+                # Map Tip 설정 추가
+                MapTipUtils.configure_map_tips(layer, vn_kv, obj["suffix"])
+
                 print(f"\n{type_layer_name} layer is editable? {layer.isEditable()} @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
 
                 # Debugging: Check if layer is added to the project
@@ -277,6 +281,23 @@ def power_network(parent, file) -> None:
                 if buses and lines:
                     order.insert(0, order.pop())
                 root.setCustomLayerOrder(order)
+
+            # 모든 레이어가 추가된 후 이 코드를 추가합니다
+            try:
+                # Map Tips 전역 설정 활성화
+                from qgis.PyQt.QtCore import QSettings
+                QSettings().setValue("qgis/enableMapTips", True)
+
+                # 더 안전하게, 액션 트리거 사용 시도
+                try:
+                    if not parent.iface.actionMapTips().isChecked():
+                        parent.iface.actionMapTips().trigger()
+                except:
+                    pass  # 액션이 없거나 접근할 수 없는 경우 무시
+
+                print("Map Tips가 성공적으로 활성화되었습니다.")
+            except Exception as e:
+                print(f"Map Tips 활성화 중 오류 발생: {e}")
 
 def pipes_network(parent, file):
     # get crs of QGIS project

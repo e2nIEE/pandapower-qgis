@@ -1,4 +1,5 @@
-# 2. version von ppprovider
+# current version of ppprovider
+# C:\Users\slee\AppData\Roaming\QGIS\QGIS3\profiles\default\python\plugins\pandapower-qgis
 
 from qgis.core import QgsVectorDataProvider, QgsVectorLayer, QgsFeature, QgsField, QgsFields, \
     QgsGeometry, QgsPointXY, QgsLineString, QgsWkbTypes, QgsProject, QgsCoordinateReferenceSystem, \
@@ -22,6 +23,26 @@ def convert_dtype_to_qmetatype(dtype):
     :return: The corresponding QMetaType type.
     :rtype: QMetaType
     """
+    '''
+    # Check if dtype is pandas Index object
+    if isinstance(dtype, pd.Index):
+        # Check data type of index
+        index_dtype_str = str(dtype.dtype)
+        print(f"Processing pandas Index with dtype: {index_dtype_str}")
+        # 정수형 인덱스인 경우에도 안전하게 문자열로 변환합니다
+        # 이는 불연속적인 인덱스나 범위가 큰 인덱스를 처리할 때 더 안정적입니다
+        # int format index can occur problem: when the index is discontinuous or large
+        return QMetaType.QString
+
+    # int64 can occur problem in QGIS
+    if pd.api.types.is_integer_dtype(dtype):
+        dtype_str = str(dtype)
+        if 'int64' in dtype_str or 'uint64' in dtype_str:
+            print(f"Converting 64-bit integer type {dtype} to QString for better compatibility.")
+            return QMetaType.QString
+        return QMetaType.Int
+    '''
+
     if pd.api.types.is_integer_dtype(dtype):
         return QMetaType.Int
     elif pd.api.types.is_unsigned_integer_dtype(dtype):
@@ -37,7 +58,7 @@ def convert_dtype_to_qmetatype(dtype):
     elif pd.api.types.is_datetime64_any_dtype(dtype):
         return QMetaType.QDateTime
     else:
-        print("Unexpected dtype detected. Add it or check if it is not available.")
+        print(f"Unexpected dtype detected: {dtype}. Add it or check if it is not available.")
         return QMetaType.Invalid
 
 
@@ -164,9 +185,8 @@ class PandapowerProvider(QgsVectorDataProvider):
 
             # Create 'pp_type' and 'pp_index' columns
             self.df.insert(0, 'pp_type', self.network_type)
-            self.df.insert(1, 'pp_index', self.df.index)
-
-            print("\n@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@self.df.index: ", self.df.index)
+            # Convert pandas index to string
+            self.df.insert(1, 'pp_index', self.df.index.astype(str).tolist())
 
             print("Merged DataFrame (2):")  # Debugging
             print(self.df.head())
@@ -262,9 +282,21 @@ class PandapowerProvider(QgsVectorDataProvider):
                     #geodata_df = getattr(self.net, f'{self.network_type}_geodata')
                     geodata_df = getattr(self.net, f'{self.network_type}').geo
                     if feature_id in geodata_df.index:
-                        geodata_df.at[feature_id, 'x'] = x
-                        geodata_df.at[feature_id, 'y'] = y
-                        print(f"Updated {self.network_type} geometry at ID {feature_id}: ({x}, {y})")
+                        #geodata_df.at[feature_id, 'x'] = x
+                        #geodata_df.at[feature_id, 'y'] = y
+                        try:
+                            # 기존 JSON 문자열 파싱
+                            geo_str = geodata_df.loc[feature_id]
+                            geo_data = json.loads(geo_str)
+
+                            # 좌표 업데이트
+                            geo_data['coordinates'] = [x, y]
+
+                            # 업데이트된 데이터를 JSON 문자열로 변환하여 저장
+                            geodata_df.loc[feature_id] = json.dumps(geo_data)
+                            print(f"Updated {self.network_type} geometry at ID {feature_id}: ({x}, {y})")
+                        except Exception as e:
+                            print(f"Error updating geometry for ID {feature_id}: {str(e)}")
                     else:
                         print(f"Warning: {self.network_type} with ID {feature_id} not found in geodata")
 
@@ -277,14 +309,31 @@ class PandapowerProvider(QgsVectorDataProvider):
                     #geodata_df = getattr(self.net, f'{self.network_type}_geodata')
                     geodata_df = getattr(self.net, f'{self.network_type}').geo
                     if feature_id in geodata_df.index:
-                        geodata_df.at[feature_id, 'coords'] = coords
-                        print(f"Updated {self.network_type} geometry at ID {feature_id} with {len(coords)} points")
+                        #geodata_df.at[feature_id, 'coords'] = coords
+                        try:
+                            # 기존 JSON 문자열 파싱
+                            geo_str = geodata_df.loc[feature_id]
+                            geo_data = json.loads(geo_str)
+
+                            # 좌표 업데이트
+                            geo_data['coordinates'] = coords
+
+                            # 업데이트된 데이터를 JSON 문자열로 변환하여 저장
+                            geodata_df.loc[feature_id] = json.dumps(geo_data)
+                            print(f"Updated {self.network_type} geometry at ID {feature_id} with {len(coords)} points")
+                        except Exception as e:
+                            print(f"Error updating line geometry for ID {feature_id}: {str(e)}")
                     else:
                         print(f"Warning: {self.network_type} with ID {feature_id} not found in geodata")
-            # 변경된 좌표를 원본 파일에 반영 # 메서드 마지막에 레이어 다시 그린 다음에 하는 게 맞아보이는데 일단 고
-            # 투두: 수동 저장 옵션
-            if self.update_geodata_in_json():
-                print(f"좌표 변경 사항이 '{self.uri_parts.get('path', '')}'에 저장되었습니다")
+
+            try:
+                # 변경된 좌표를 원본 파일에 반영 # 메서드 마지막에 레이어 다시 그린 다음에 하는 게 맞아보이는데 일단 고
+                # 투두: 수동 저장 옵션
+                if self.update_geodata_in_json():
+                    print(f"좌표 변경 사항이 '{self.uri_parts.get('path', '')}'에 저장되었습니다")
+            except Exception as e:
+                print(f"Failed to save changed geo data: {str(e)}")
+                raise
 
             # 변경 사항 알림을 보내기 위한 signal 발생
             # 이는 QGIS가 데이터 변경을 인식하고 화면을 다시 그리도록 하는 중요한 단계
@@ -308,10 +357,17 @@ class PandapowerProvider(QgsVectorDataProvider):
             return False
 
 
-    def update_geodata_in_json(self):
+    def update_geodata_in_json(self, auto_save=True):
         """
         Update changed geodata of original json file with pandapower API.
+        If auto_save False, changed geodata kept in memory only.
+        Currently support auto save only.
         """
+        if not auto_save:
+            # 변경 사항을 저장하지 않고 메모리에만 유지
+            print("Changes are kept in memory only.")
+            return True
+
         try:
             import pandapower as pp
             import os
@@ -346,6 +402,7 @@ class PandapowerProvider(QgsVectorDataProvider):
 
             for idx in current_geodata.index:
                 if idx in original_geodata.index:
+                    '''
                     if self.network_type in ['bus', 'junction']:
                         if 'x' in current_geodata.columns and 'y' in current_geodata.columns:
                             original_geodata.at[idx, 'x'] = current_geodata.at[idx, 'x']
@@ -353,6 +410,9 @@ class PandapowerProvider(QgsVectorDataProvider):
                     elif self.network_type in ['line', 'pipe']:
                         if 'coords' in current_geodata.columns:
                             original_geodata.at[idx, 'coords'] = current_geodata.at[idx, 'coords']
+                    '''
+                    # 현재 JSON 문자열을 원본에 복사
+                    original_geodata.loc[idx] = current_geodata.loc[idx]
 
             # Save updated network to json
             try:
@@ -415,14 +475,34 @@ class PandapowerProvider(QgsVectorDataProvider):
 
                 # Point geometry (bus/junction)
                 if self.network_type in ['bus', 'junction']:
+                    '''
                     min_x = df_geodata['x'].min()
                     max_x = df_geodata['x'].max()
                     min_y = df_geodata['y'].min()
                     max_y = df_geodata['y'].max()
+                    '''
+                    for idx, geo_str in df_geodata.items():
+                        try:
+                            if geo_str:
+                                geo_data = json.loads(geo_str)
+                                if ('coordinates' in geo_data and isinstance(geo_data['coordinates'], list)
+                                        and len(geo_data['coordinates']) == 2):
+                                    x = geo_data['coordinates'][0]
+                                    y = geo_data['coordinates'][1]
+                                    min_x = min(min_x, x)
+                                    max_x = max(max_x, x)
+                                    min_y = min(min_y, y)
+                                    max_y = max(max_y, y)
+                                else:
+                                    print(f"Incorrect coordinate format for {self.network_type}.")
+                                    return
+                        except Exception as e:
+                            print(f"Warning: Bus/Junction data of index {idx} failed to produce: {str(e)}")
 
                 # Line geometry (line/pipe)
                 elif self.network_type in ['line', 'pipe']:
                     # Iterate through the coordinates of each line
+                    '''
                     for _, row in df_geodata.iterrows():
                         coords = row.get('coords', [])
                         if coords:
@@ -432,16 +512,36 @@ class PandapowerProvider(QgsVectorDataProvider):
                                 max_x = max(max_x, x)
                                 min_y = min(min_y, y)
                                 max_y = max(max_y, y)
+                    '''
+                    for idx, geo_str in df_geodata.items():
+                        try:
+                            if geo_str:
+                                geo_data = json.loads(geo_str)
+                                if 'coordinates' in geo_data and isinstance(geo_data['coordinates'], list):
+                                    for coord_pair in geo_data['coordinates']:
+                                        if isinstance(coord_pair, list) and len(coord_pair) == 2:
+                                            x, y = coord_pair[0], coord_pair[1]
+                                            min_x = min(min_x, x)
+                                            max_x = max(max_x, x)
+                                            min_y = min(min_y, y)
+                                            max_y = max(max_y, y)
+                                        else:
+                                            print(f"Incorrect coordinate format for {self.network_type}.")
+                                            return
+                        except Exception as e:
+                            print(f"Warning: Lind/Pipe data of index {idx} failed to produce: {str(e)}")
 
                 # Check if the valid range has been calculated
                 if min_x == float('inf') or max_x == float('-inf'):
-                    print("Warning: extent is infinite")
+                    print("Warning: extent is infinite.")
                     return QgsRectangle()
 
                 return QgsRectangle(min_x, min_y, max_x, max_y)
 
             except Exception as e:
                 self.pushError(f"Error calculating extent: {str(e)}")
+                import traceback
+                traceback.print_exc()
                 return QgsRectangle()
 
     def featureCount(self):

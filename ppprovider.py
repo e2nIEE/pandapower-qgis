@@ -1,3 +1,5 @@
+# alte version
+
 """QGIS에서 데이터 소스를 직접 GeoJSON으로 변환하지 않고 pandapower 객체를 벡터로 변환하려면
 QgsVectorDataProvider 클래스를 오버라이딩해야 합니다. 아래 단계에 따라 작업을 진행할 수 있습니다:
 

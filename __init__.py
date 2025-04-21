@@ -35,6 +35,5 @@ def classFactory(iface):  # pylint: disable=invalid-name
     from .pandapower_qgis import ppqgis
     from .ppprovider_metadata import PandapowerProviderMetadata
     from qgis.core import QgsProviderRegistry
-    print("testtesttesttesttesttesttest")
     QgsProviderRegistry.instance().registerProvider(PandapowerProviderMetadata())
     return ppqgis(iface)
