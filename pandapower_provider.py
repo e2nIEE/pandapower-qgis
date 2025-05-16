@@ -17,6 +17,7 @@ from .network_container import NetworkContainer
 def convert_dtype_to_qmetatype(dtype):
     """
     Converts a pandas data type (dtype) to a corresponding Qt data type (QMetatype).
+    Note: It does not convert actual values. It just returns the corresponding Qt data type for the given pandas data type.
 
     :param dtype: The pandas data type to convert.
     :type dtype: pandas dtype
@@ -88,26 +89,31 @@ class PandapowerProvider(QgsVectorDataProvider):
         # Setting network data
         self.net = network_data['net']
         print("\nvalue of net: ", self.net)
-        self.vn_kv = network_data['vn_kv']
-        self.type_layer_name = network_data['type_layer_name']
-        print("type of layer name: \n", self.type_layer_name)
-        print("")
-        if self.uri_parts['network_type'] not in ['bus', 'line', 'junction', 'pipe']:
-            raise ValueError("Invalid network_type. Expected 'bus', 'line', 'junction', 'pipe'.")  # necessary?
+
+        if self.uri_parts['network_type'] in ['bus', 'line']:
+            self.vn_kv = network_data['vn_kv']
+        elif self.uri_parts['network_type'] in ['junction', 'pipe']:
+            self.pn_bar = network_data['pn_bar']
         else:
-            self.network_type = self.uri_parts['network_type']
+            raise ValueError("Invalid network_type. Expected 'bus', 'line', 'junction', 'pipe'.")  # necessary?
+        self.network_type = self.uri_parts['network_type']
+
+        self.type_layer_name = network_data['type_layer_name']
+        print("type of layer name: \n", self.type_layer_name, "\n")
+
         self.current_crs = int(network_data['current_crs']) if network_data['current_crs'] else 4326
         self.crs = self.sourceCrs()
-        #self.fields_list = QgsFields()
         self.fields_list = None
-        #print(f"fields_list 초기 상태: 비어있음? {len(self.fields_list) == 0}")
         self.df = None
-        #self.changed_feature_ids = set()
         self._extent = None
 
         provider_list = QgsProviderRegistry.instance().providerList()
         print("provider list by init ppprovider", provider_list)
         self._is_valid = True
+
+        # State tracking variables for asynchronous save operation of the changeGeometryValues method
+        self._save_in_progress = False  # Indicates whether a save operation is in progress
+        self._save_thread = None  # QThread instance performing the save operation
 
         print("")
         print("")
@@ -117,9 +123,7 @@ class PandapowerProvider(QgsVectorDataProvider):
         Merges the network type dataframe with its corresponding result dataframe.
         Only includes data with matching vn_kv value.
         """
-        print("")
-        print("\nnow in merge_df")
-        print("")
+        print("\n\nnow in merge_df\n\n")
 
         try:
             # Get the dataframes for the network type and its result
@@ -152,7 +156,7 @@ class PandapowerProvider(QgsVectorDataProvider):
                     df_network_type = df_network_type.loc[filtered_indices]
                     if df_res_network_type is not None:
                         df_res_network_type = df_res_network_type.loc[filtered_indices]
-                elif self.network_type == 'junction':
+                elif self.network_type == 'junction':   # pn_bar
                     if 'vn_kv' in df_network_type.columns:
                         filtered_indices = df_network_type[df_network_type['vn_kv'] == self.vn_kv].index
                         df_network_type = df_network_type.loc[filtered_indices]
@@ -185,8 +189,9 @@ class PandapowerProvider(QgsVectorDataProvider):
 
             # Create 'pp_type' and 'pp_index' columns
             self.df.insert(0, 'pp_type', self.network_type)
+            self.df.insert(1, 'pp_index', self.df.index)
             # Convert pandas index to string
-            self.df.insert(1, 'pp_index', self.df.index.astype(str).tolist())
+            #self.df.insert(1, 'pp_index', self.df.index.astype(str).tolist())
 
             print("Merged DataFrame (2):")  # Debugging
             print(self.df.head())
@@ -201,7 +206,7 @@ class PandapowerProvider(QgsVectorDataProvider):
         """
         테이블의 필드 정보를 반환합니다.
         지연 초기화(lazy initialization) 패턴을 사용하여 실제로 필요할 때만 데이터베이스를 조회합니다.
-        Return field data of table
+        Return field data of table.
         Using lazy initialization pattern, search database only when it needed.
         """
         #if not self.fields_list:  # 첫 호출 시에만 데이터베이스를 조회합니다
@@ -270,6 +275,20 @@ class PandapowerProvider(QgsVectorDataProvider):
         print(f"Dataframe indices: {list(self.df.index)}")
         #print(f"Geodata indices: {list(getattr(self.net, f'{self.network_type}_geodata').index)}\n")
         print(f"Geodata indices: {list(getattr(self.net, f'{self.network_type}').geo.index)}\n")
+
+        # Check if an existing save operation is in progress
+        if self._save_in_progress:
+            from qgis.utils import iface
+            from qgis.core import Qgis
+            iface.messageBar().pushMessage(
+                "Notification",
+                "The previous save operation is still in progress. Please try again after it is completed.",
+                level=Qgis.Warning,
+                duration=5
+            )
+            return False  # Operation denied
+
+        # Proceed to update and save the dataframe only when a save operation is not in progress
         try:
             # Update Geodata of Pandapower Network
             for feature_id, new_geometry in geometry_map.items():
@@ -279,20 +298,19 @@ class PandapowerProvider(QgsVectorDataProvider):
                     y = new_geometry.asPoint().y()
 
                     # Update geodata of dataframe
-                    #geodata_df = getattr(self.net, f'{self.network_type}_geodata')
                     geodata_df = getattr(self.net, f'{self.network_type}').geo
                     if feature_id in geodata_df.index:
                         #geodata_df.at[feature_id, 'x'] = x
                         #geodata_df.at[feature_id, 'y'] = y
                         try:
-                            # 기존 JSON 문자열 파싱
+                            # Load geo data of existing dataframe and convert it into python dict
                             geo_str = geodata_df.loc[feature_id]
                             geo_data = json.loads(geo_str)
 
-                            # 좌표 업데이트
+                            # Update coordinates in 'coordinates' key of the dictionary
                             geo_data['coordinates'] = [x, y]
 
-                            # 업데이트된 데이터를 JSON 문자열로 변환하여 저장
+                            # Convert back into json String and save updated data in dataframe
                             geodata_df.loc[feature_id] = json.dumps(geo_data)
                             print(f"Updated {self.network_type} geometry at ID {feature_id}: ({x}, {y})")
                         except Exception as e:
@@ -311,14 +329,14 @@ class PandapowerProvider(QgsVectorDataProvider):
                     if feature_id in geodata_df.index:
                         #geodata_df.at[feature_id, 'coords'] = coords
                         try:
-                            # 기존 JSON 문자열 파싱
+                            # Load geo data of existing dataframe and convert it into python dict
                             geo_str = geodata_df.loc[feature_id]
                             geo_data = json.loads(geo_str)
 
-                            # 좌표 업데이트
+                            # Update coordinates in 'coordinates' key of the dictionary
                             geo_data['coordinates'] = coords
 
-                            # 업데이트된 데이터를 JSON 문자열로 변환하여 저장
+                            # Convert back into json String and save updated data in dataframe
                             geodata_df.loc[feature_id] = json.dumps(geo_data)
                             print(f"Updated {self.network_type} geometry at ID {feature_id} with {len(coords)} points")
                         except Exception as e:
@@ -326,6 +344,8 @@ class PandapowerProvider(QgsVectorDataProvider):
                     else:
                         print(f"Warning: {self.network_type} with ID {feature_id} not found in geodata")
 
+            '''
+            # Synchronous file saving tasks
             try:
                 # 변경된 좌표를 원본 파일에 반영 # 메서드 마지막에 레이어 다시 그린 다음에 하는 게 맞아보이는데 일단 고
                 # 투두: 수동 저장 옵션
@@ -334,7 +354,7 @@ class PandapowerProvider(QgsVectorDataProvider):
             except Exception as e:
                 print(f"Failed to save changed geo data: {str(e)}")
                 raise
-
+            
             # 변경 사항 알림을 보내기 위한 signal 발생
             # 이는 QGIS가 데이터 변경을 인식하고 화면을 다시 그리도록 하는 중요한 단계
             self.dataChanged.emit()
@@ -352,9 +372,172 @@ class PandapowerProvider(QgsVectorDataProvider):
             except Exception as e:
                 print(f"Warning: Could not trigger layer repaint: {str(e)}")
             return True
+            '''
+
+            # Asynchronous file saving tasks
+            # Define a callback function to be executed after saving
+            def on_save_complete(success, message, backup_path=None):
+                self._save_in_progress = False
+
+                # UI Feedback for success or failure
+                from qgis.core import Qgis
+                from qgis.utils import iface
+
+                if success:
+                    # Display success message in UI
+                    iface.messageBar().pushMessage(
+                        "Saved Successfully",
+                        message,
+                        level=Qgis.Success,
+                        duration=5
+                    )
+
+                    # Display backup file information
+                    if backup_path:
+                        iface.messageBar().pushMessage(
+                            "Backup file created",
+                            f"path: {backup_path}",
+                            level=Qgis.Info,
+                            duration=8
+                        )
+
+                    # Change Notification Triggered
+                    self.dataChanged.emit()
+
+                    # 캐시 무효화 (이 메서드가 있다면)
+                    #if hasattr(self, 'cacheInvalidate'):
+                        #self.cacheInvalidate()
+
+                    # Explicit Layer Update
+                    # Maybe not necessary
+                    try:
+                        layers = QgsProject.instance().mapLayersByName(self.type_layer_name)
+                        if layers:
+                            layers[0].triggerRepaint()
+                            print(f"Triggered repaint for layer: {self.type_layer_name}")
+                    except Exception as e:
+                        print(f"Warning: Could not trigger layer repaint: {str(e)}")
+                else:
+                    # Display failure message to UI
+                    iface.messageBar().pushMessage(
+                        "Save failed",
+                        message,
+                        level=Qgis.Critical,
+                        duration=10
+                    )
+
+            # Start asynchronous save
+            self.update_geodata_in_json_async(on_save_complete)
+            # Notify that the save operation has started
+            return True
+
         except Exception as e:
             self.pushError(f"Failed to change geometries: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return False
+
+
+    def update_geodata_in_json_async(self, callback=None):
+        """
+        Asynchronously updates the changed geodata in the original JSON file.
+        Note: It is method for asynchronous update. For synchronous update, see update_geodata_in_json()
+
+        :param callback: Function to be called after saving is complete.
+                        on_save_complete(success, message, backup_path)
+        """
+        # Do not process new requests if a save operation is already in progress
+        if self._save_in_progress:
+            from qgis.utils import iface
+            from qgis.core import Qgis
+            iface.messageBar().pushMessage(
+                "Notify",
+                "A save operation is already in progress. Please try again later.",
+                level=Qgis.Info
+            )
+            return
+        else:
+            self._save_in_progress = True
+
+        from PyQt5.QtCore import QThread, pyqtSignal
+
+        class SaveThread(QThread):
+            # Save Completion Signal (Success Status, Message, Backup Path)
+            saveCompleted = pyqtSignal(bool, str, str)
+
+            def __init__(self, provider):
+                super().__init__()
+                self.provider = provider
+
+            def run(self):
+                try:
+                    import pandapower as pp
+                    import os
+                    import shutil
+                    from datetime import datetime
+
+                    original_path = self.provider.uri_parts.get('path', '')
+                    if not original_path or not os.path.exists(original_path):
+                        self.saveCompleted.emit(False, f"Cannot find original file at: {original_path}", "")
+                        return
+
+                    # Create Backup File (Add Date/Time Stamp)
+                    backup_path = f"{original_path}.{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak"
+                    try:
+                        shutil.copy2(original_path, backup_path)
+                        print(f"The backup file has been created: {backup_path}")
+                    except Exception as e:
+                        print(f"An error occurred while creating the backup file: {str(e)}")
+                        # 백업 생성 실패가 심각한 문제는 아니라고 간주하고 계속 진행하려면
+                        #backup_path = ""
+                        return
+
+                    # Load original network from json file
+                    try:
+                        original_net = pp.from_json(original_path)
+                    except Exception as e:
+                        self.saveCompleted.emit(False, f"Fail to load original network: {str(e)}", backup_path)
+                        return
+
+                    # 현재 메모리의 변경된 geodata
+                    current_geodata = getattr(self.provider.net, f"{self.provider.network_type}").geo
+
+                    # 원본 네트워크의 geodata를 변경된 좌표로 업데이트
+                    # 필터링된 데이터만 고려됨
+                    original_geodata = getattr(original_net, f"{self.provider.network_type}").geo
+
+                    for idx in current_geodata.index:
+                        if idx in original_geodata.index:
+                            # 현재 JSON 문자열을 원본에 복사
+                            original_geodata.loc[idx] = current_geodata.loc[idx]
+
+                    # 업데이트된 네트워크를 json으로 저장
+                    try:
+                        pp.to_json(original_net, original_path)
+                        success_msg = f"좌표 변경 사항이 저장되었습니다: {original_path}"
+                        self.saveCompleted.emit(True, success_msg, backup_path)
+                    except PermissionError:
+                        error_msg = f"파일에 접근할 수 없습니다. 파일이 다른 프로그램에서 열려있거나 쓰기 권한이 없습니다: {original_path}"
+                        self.saveCompleted.emit(False, error_msg, backup_path)
+                    except Exception as e:
+                        error_msg = f"An error occurred while saving file: {str(e)}"
+                        self.saveCompleted.emit(False, error_msg, backup_path)
+
+                except Exception as e:
+                    import traceback
+                    error_msg = f"An error occurred while updating geodata: {str(e)}"
+                    traceback.print_exc()
+                    self.saveCompleted.emit(False, error_msg, "")
+
+        # Create a thread for saving
+        self._save_thread = SaveThread(self)
+
+        # Connect callback
+        if callback:
+            self._save_thread.saveCompleted.connect(callback)
+
+        # Starting thread
+        self._save_thread.start()
 
 
     def update_geodata_in_json(self, auto_save=True):
@@ -362,10 +545,10 @@ class PandapowerProvider(QgsVectorDataProvider):
         Update changed geodata of original json file with pandapower API.
         If auto_save False, changed geodata kept in memory only.
         Currently support auto save only.
+        Note: It is method for synchronous update. For asynchronous update, see update_geodata_in_json_async()
         """
         if not auto_save:
-            # 변경 사항을 저장하지 않고 메모리에만 유지
-            print("Changes are kept in memory only.")
+            print("Keep changes in memory without saving.")
             return True
 
         try:
@@ -376,16 +559,16 @@ class PandapowerProvider(QgsVectorDataProvider):
 
             original_path = self.uri_parts.get('path', '')
             if not original_path or not os.path.exists(original_path):
-                self.pushError(f"Cannot find original file at: {original_path}")
+                self.pushError(f"The original file cannot be found at: {original_path}")
                 return False
 
-            # 백업 파일 생성 (날짜/시간 스탬프 추가)
+            # Create backup of json file before editing (add Date/Time stamp)
             backup_path = f"{original_path}.{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak"
             try:
                 shutil.copy2(original_path, backup_path)
-                print(f"백업 파일이 생성되었습니다: {backup_path}")
+                print(f"A backup file has been created: {backup_path}")
             except Exception as e:
-                print(f"백업 파일 생성 중 오류 발생: {str(e)}")
+                print(f"An error occurred while creating backup file: {str(e)}")
                 # continue
 
             # Load original network from json
@@ -411,23 +594,23 @@ class PandapowerProvider(QgsVectorDataProvider):
                         if 'coords' in current_geodata.columns:
                             original_geodata.at[idx, 'coords'] = current_geodata.at[idx, 'coords']
                     '''
-                    # 현재 JSON 문자열을 원본에 복사
+                    # Copy current geodata (json String) to the original network
                     original_geodata.loc[idx] = current_geodata.loc[idx]
 
             # Save updated network to json
             try:
                 pp.to_json(original_net, original_path)
-                print(f"좌표 변경 사항이 저장되었습니다: {original_path}")
+                print(f"Changed coordinates of {original_path} is successfully saved.")
                 return True
             except PermissionError:
-                self.pushError(f"파일에 접근할 수 없습니다. 파일이 다른 프로그램에서 열려있거나 쓰기 권한이 없습니다: {original_path}")
+                self.pushError(f"Cannot reach to {original_path}. The file may opened in another program or required permissions.")
                 return False
             except Exception as e:
-                self.pushError(f"파일 저장 중 오류 발생: {str(e)}")
+                self.pushError(f"An Error occurred while saving: {str(e)}")
                 return False
 
         except Exception as e:
-            self.pushError(f"Error occurs while updating geodata: {str(e)}")
+            self.pushError(f"Error occurred while updating geodata: {str(e)}")
             import traceback
             traceback.print_exc()
             return False
@@ -579,5 +762,8 @@ class PandapowerProvider(QgsVectorDataProvider):
             return QgsWkbTypes.LineString
 
     def unload(self):
+        # Wait until the running save thread completes
+        if self._save_thread and self._save_thread.isRunning():
+            self._save_thread.wait()
         # Remove custom data provider when it is deleted
         QgsProviderRegistry.instance().removeProvider('PandapowerProvider')

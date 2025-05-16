@@ -282,7 +282,6 @@ def power_network(parent, file) -> None:
                     order.insert(0, order.pop())
                 root.setCustomLayerOrder(order)
 
-            # 모든 레이어가 추가된 후 이 코드를 추가합니다
             try:
                 # Map Tips 전역 설정 활성화
                 from qgis.PyQt.QtCore import QSettings
@@ -295,9 +294,9 @@ def power_network(parent, file) -> None:
                 except:
                     pass  # 액션이 없거나 접근할 수 없는 경우 무시
 
-                print("Map Tips가 성공적으로 활성화되었습니다.")
+                print("Map Tips is successfully activated.")
             except Exception as e:
-                print(f"Map Tips 활성화 중 오류 발생: {e}")
+                print(f"An error occurred while activating Map Tips: {e}")
 
 def pipes_network(parent, file):
     # get crs of QGIS project

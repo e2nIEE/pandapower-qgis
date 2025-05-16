@@ -158,11 +158,13 @@ class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
                 value = None
             elif isinstance(value, (bool, np.bool_)):  # handle numpy.bool_ type of pandas
                 value = bool(value)  # Explicit conversion to Python native bool
+            elif isinstance(value, (np.integer, int)):  # handle numpy integer types of pandas
+                value = int(value)  # Explicit conversion to Python native int
             attributes.append(value)
         feature.setAttributes(attributes)
 
         # Set feature id
-        feature.setId(idx) # 추측: df의 index = pp_index, 즉 둘은 동일하며 비연속, 따라서 id는 유용
+        feature.setId(idx) # df.index = pp_index, not equal to bus_name
 
         self._index += 1
         return True
