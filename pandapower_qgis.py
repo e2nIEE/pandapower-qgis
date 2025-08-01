@@ -40,6 +40,7 @@ from .resources import *
 # Import the code for the dialog
 from .pandapower_import_dialog import ppImportDialog
 from .pandapower_export_dialog import ppExportDialog
+from .pandapower_runpp_dialog import ppRunDialog
 from .pandapower_export_summary_dialog import ppExportSummaryDialog
 
 # install requirements
@@ -90,8 +91,10 @@ class ppqgis:
         # Must be set in initGui() to survive plugin reloads
         self.first_start_import = None
         self.first_start_export = None
+        self.first_start_runpp = None
         self.dlg_import = None
         self.dlg_export = None
+        self.dlg_runpp = None
         self.dlg_export_summary = None
         self.dir = None
         self.layer_id_dict = None
@@ -221,6 +224,7 @@ class ppqgis:
         icon_path = ':/plugins/pandapower_qgis/pp.svg'
         import_icon_path = ':/plugins/pandapower_qgis/pp_import.svg'
         export_icon_path = ':/plugins/pandapower_qgis/pp_export.svg'
+        runpp_icon_path = ':/plugins/pandapower_qgis/pp.svg'    # tmp
 
         self.add_action(
             icon_path=export_icon_path,
@@ -234,9 +238,16 @@ class ppqgis:
             callback=self.imprt,
             parent=self.iface.mainWindow())
 
+        self.add_action(
+            icon_path=runpp_icon_path,
+            text=self.tr(u'run pandapower network'),
+            callback=self.runpp_action,
+            parent=self.iface.mainWindow())
+
         # will be set False in run()
         self.first_start_import = True
         self.first_start_export = True
+        self.first_start_runpp = True
 
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
@@ -360,3 +371,47 @@ class ppqgis:
                         'The selected json file could not be loaded. Could not find "pandapowerNet" or "pandapipesNet"',
                         level=Qgis.Critical
                     )
+
+
+    def runpp_action(self):
+        """Run runpp to run pandapower network"""
+        print("=== Debug: runpp_action method started in pandapower_qgis.py ===")
+        from .ppqgis_runpp import run_network  # 🆕 새로 만들 파일
+
+        # 1️⃣ 다이얼로그 생성 (처음만)
+        if self.first_start_runpp:
+            self.first_start_runpp = False
+            self.dlg_runpp = ppRunDialog()  # 🆕 새로 만들 다이얼로그
+        uri = None
+
+        # 2️⃣ 현재 상황 확인해서 다이얼로그 설정
+        # 활성 레이어 확인
+        active_layer = self.iface.activeLayer()
+        if active_layer and active_layer.dataProvider().name() == "PandapowerProvider":
+            uri = active_layer.source() # ex: path="C:/Users/slee/Documents/pp_old/mv_oberrhein_wgs.json";network_type="bus";geometry="Point";epsg="4326"
+        else:
+            # 없으면 첫 번째 판다파워 레이어 찾기
+            layers = QgsProject.instance().mapLayers()
+            for layer_id, layer in layers.items():
+                if layer.dataProvider().name() == "PandapowerProvider":
+                    uri = layer.source()
+                    break
+        if not uri:
+            self.iface.messageBar().pushMessage(
+                "알림",
+                "Pandapower 네트워크를 먼저 가져와주세요!",
+                level=Qgis.Warning,
+                duration=3
+            )
+            return
+
+        # 3️⃣ 다이얼로그에 네트워크 정보 설정
+        self.dlg_runpp.setup_network(uri) # need filename as parameter like imprt method?
+
+        # 4️⃣ 다이얼로그 실행
+        self.dlg_runpp.show()
+        result = self.dlg_runpp.exec_()
+
+        # 5️⃣ 실제 작업은 다른 파일로 위임!
+        if result:
+            run_network(self, uri, self.dlg_runpp.get_parameters())

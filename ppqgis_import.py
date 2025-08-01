@@ -31,6 +31,7 @@ from qgis.core import QgsProject, QgsVectorLayer, QgsApplication, \
 from .ppprovider import PandapowerProvider
 from .network_container import NetworkContainer
 from .pandapower_maptip import MapTipUtils
+from .renderer_utils import create_bus_renderer, create_line_renderer
 
 # constants for color ramps
 BUS_LOW_COLOR = "#ccff00"  # lime
@@ -84,6 +85,17 @@ def power_network(parent, file) -> None:
         layer_name = parent.dlg_import.layerNameEdit.text()
         run_pandapower = parent.dlg_import.runpp.isChecked()
         render = parent.dlg_import.gradRender.isChecked()
+
+        # if res column is cleared, render off
+        # 똑똑한 판단: 계산 결과가 없으면 자동으로 간단한 방식 사용
+        has_result_data = (hasattr(net, 'res_bus') and
+                           net.res_bus is not None and
+                           not net.res_bus.empty and
+                           len(net.res_bus) > 0)
+        if not has_result_data:
+            render = False  # 강제로 간단한 색칠 방식 사용
+            print("⚠️ 계산 결과가 없어서 간단한 색상 방식을 사용합니다")
+
         try:
             crs = int(parent.dlg_import.projectionSelect.crs().authid().split(':')[1])
         except ValueError:
@@ -108,55 +120,65 @@ def power_network(parent, file) -> None:
         line_color_ramp = QgsGradientColorRamp(QColor(LINE_LOW_COLOR), QColor(LINE_HIGH_COLOR))
 
         # Color lines by load/ buses by voltage
+        # if render:
+        #     classification_methode = QgsApplication.classificationMethodRegistry().method("EqualInterval")
+        #
+        #     # generate symbology for bus layer
+        #     bus_target = "vm_pu"
+        #     min_target = "min_vm_pu"
+        #     max_target = "max_vm_pu"
+        #     # map value from its possible min/max to 0/100
+        #     classification_str = f'scale_linear("{bus_target}", 0.9, 1.1, 0, 100)'
+        #
+        #     bus_renderer = QgsGraduatedSymbolRenderer()
+        #     bus_renderer.setClassificationMethod(classification_methode)
+        #     bus_renderer.setClassAttribute(classification_str)
+        #     # add categories (10 categories, 10% increments)
+        #     for x in range(10):
+        #         low_bound = x * 10
+        #         high_bound = (x + 1) * 10 - .0001
+        #         if x == 9:  # fix for not including 100%
+        #             high_bound = 100
+        #         bus_renderer.addClassRange(
+        #             QgsRendererRange(
+        #                 QgsClassificationRange(f'class {low_bound}-{high_bound}', low_bound, high_bound),
+        #                 QgsMarkerSymbol()
+        #             )
+        #         )
+        #     bus_renderer.updateColorRamp(bus_color_ramp)
+        #
+        #     # generate symbology for line layer
+        #     line_target = "loading_percent"
+        #
+        #     line_renderer = QgsGraduatedSymbolRenderer()
+        #     line_renderer.setClassificationMethod(classification_methode)
+        #     line_renderer.setClassAttribute(line_target)
+        #
+        #     # add categories (10 categories, 10% increments)
+        #     for x in range(10):
+        #         low_bound = x * 10
+        #         high_bound = (x + 1) * 10 - .0001
+        #         if x == 9:  # fix for not including 100%
+        #             high_bound = 100
+        #         line_symbol = QgsLineSymbol()
+        #         line_symbol.setWidth(.6)
+        #         line_renderer.addClassRange(
+        #             QgsRendererRange(
+        #                 QgsClassificationRange(f'class {low_bound}-{high_bound}', low_bound, high_bound),
+        #                 line_symbol
+        #             )
+        #         )
+        #     line_renderer.updateColorRamp(line_color_ramp)
+
+        # Color lines by load/ buses by voltage
         if render:
-            classification_methode = QgsApplication.classificationMethodRegistry().method("EqualInterval")
-
-            # generate symbology for bus layer
-            bus_target = "vm_pu"
-            min_target = "min_vm_pu"
-            max_target = "max_vm_pu"
-            # map value from its possible min/max to 0/100
-            classification_str = f'scale_linear("{bus_target}", 0.9, 1.1, 0, 100)'
-
-            bus_renderer = QgsGraduatedSymbolRenderer()
-            bus_renderer.setClassificationMethod(classification_methode)
-            bus_renderer.setClassAttribute(classification_str)
-            # add categories (10 categories, 10% increments)
-            for x in range(10):
-                low_bound = x * 10
-                high_bound = (x + 1) * 10 - .0001
-                if x == 9:  # fix for not including 100%
-                    high_bound = 100
-                bus_renderer.addClassRange(
-                    QgsRendererRange(
-                        QgsClassificationRange(f'class {low_bound}-{high_bound}', low_bound, high_bound),
-                        QgsMarkerSymbol()
-                    )
-                )
-            bus_renderer.updateColorRamp(bus_color_ramp)
-
-            # generate symbology for line layer
-            line_target = "loading_percent"
-
-            line_renderer = QgsGraduatedSymbolRenderer()
-            line_renderer.setClassificationMethod(classification_methode)
-            line_renderer.setClassAttribute(line_target)
-
-            # add categories (10 categories, 10% increments)
-            for x in range(10):
-                low_bound = x * 10
-                high_bound = (x + 1) * 10 - .0001
-                if x == 9:  # fix for not including 100%
-                    high_bound = 100
-                line_symbol = QgsLineSymbol()
-                line_symbol.setWidth(.6)
-                line_renderer.addClassRange(
-                    QgsRendererRange(
-                        QgsClassificationRange(f'class {low_bound}-{high_bound}', low_bound, high_bound),
-                        line_symbol
-                    )
-                )
-            line_renderer.updateColorRamp(line_color_ramp)
+            # 🎨 공통 렌더러 함수 사용 (그라데이션 방식)
+            bus_renderer = create_bus_renderer(render=True)
+            line_renderer = create_line_renderer(render=True)
+        else:
+            # 🎨 공통 렌더러 함수 사용 (단일 색상 방식)
+            bus_renderer, bus_color_ramp = create_bus_renderer(render=False)
+            line_renderer, line_color_ramp = create_line_renderer(render=False)
 
         # find min and max voltage. Used for finding color of symbols.
         max_kv = max(voltage_levels)
@@ -219,6 +241,7 @@ def power_network(parent, file) -> None:
                     #"path": r"C:\Users\slee\Documents\pp_old\mv_oberrhein_wgs - Kopie.json", #str(file_path),
                     "path": file,
                     "network_type": obj["suffix"],
+                    "voltage_level": str(vn_kv),
                     "geometry": "Point" if obj["suffix"] in ['bus', 'junction'] else "LineString",
                     "epsg": str(current_crs),
                     #"current_crs": current_crs
@@ -305,6 +328,40 @@ def pipes_network(parent, file):
     import pandapipes as pp
     import geo # in a future version this should be replaced by pandapower.plotting.geo as geo
     import geojson
+
+    print("=" * 50)
+    print("ppqgis_import.py, pipes_network method")
+
+    # 디버그: 파일 읽기 전
+    print(f"[DEBUG] Loading pandapipes file: {file}")
+    print(f"[DEBUG] File exists: {os.path.exists(file)}")
+
+    try:
+        # 디버그: 파일 내용 미리 확인
+        with open(file, 'r') as f:
+            content = f.read()
+            print(f"[DEBUG] File content preview (first 500 chars):")
+            print(content[:500])
+            print(f"[DEBUG] Contains 'pandapipesNet': {'pandapipesNet' in content}")
+    except Exception as e:
+        print(f"[DEBUG] Error reading file: {e}")
+
+    # 실제 로딩 시도
+    try:
+        net = pp.from_json(file)
+        print(f"[DEBUG] Successfully loaded pandapipes network")
+        print(f"[DEBUG] Network type: {type(net)}")
+        print(f"[DEBUG] Network keys: {list(net.keys()) if hasattr(net, 'keys') else 'No keys method'}")
+    except Exception as e:
+        print(f"[DEBUG] Error loading pandapipes network: {e}")
+        import traceback
+        traceback.print_exc()
+        #return  # 에러 발생 시 함수 종료
+        raise   # 에러를 상위로 전파
+
+
+    print("=" * 50)
+
     net = pp.from_json(file)
 
     parent.dlg_import.convert_to_pipes()
@@ -443,6 +500,7 @@ def pipes_network(parent, file):
                     continue
                 type_layer_name = f'{layer_name}_{str(pn_bar)}_{obj["suffix"]}'
                 file_path = f'{folder_name}\\{type_layer_name}.geojson'
+                '''
                 gj = geo.dump_to_geojson(net,
                                          nodes=obj['object'] if obj['suffix'] == 'junction' else False,
                                          branches=obj['object'] if obj['suffix'] == 'pipe' else False)
@@ -453,10 +511,63 @@ def pipes_network(parent, file):
                     layer = QgsVectorLayer(file_path, type_layer_name, "ogr")
                 else:
                     layer = QgsVectorLayer(geojson.dumps(gj), type_layer_name, "ogr")
+                '''
+
+                uri_parts = {
+                    "path": file,
+                    "network_type": obj["suffix"],
+                    "pressure_level": str(pn_bar),  # ← 파이프의 경우 압력 레벨 추가!
+                    "geometry": "Point" if obj["suffix"] in ['bus', 'junction'] else "LineString",
+                    "epsg": str(current_crs),
+                }
+                provider_metadata = QgsProviderRegistry.instance().providerMetadata("PandapowerProvider")
+                uri = provider_metadata.encodeUri(uri_parts)
+
+
+                # Register network data to container
+                network_data = {
+                    'net': net,
+                    # 'net': obj,
+                    'pn_bar': pn_bar,
+                    'type_layer_name': type_layer_name,
+                    'network_type': obj['suffix'],
+                    'current_crs': current_crs
+                }
+                NetworkContainer.register_network(uri, network_data)
+                print("Network registered.")
+                print(network_data['net'])
+
+                layer = QgsVectorLayer(uri, type_layer_name, "PandapowerProvider")
+
+                print("\nQgsvectorlayer created.")
+                provider_list = QgsProviderRegistry.instance().providerList()
+                print("Registered providers: ", provider_list, "after ------------\n")
+
+
                 layer.setRenderer(obj['renderer'])
                 # add layer to group
                 QgsProject.instance().addMapLayer(layer, False)
                 group.addLayer(layer)
+
+
+                # Map Tip 설정 추가
+                MapTipUtils.configure_map_tips(layer, pn_bar, obj["suffix"])
+
+                # Debugging: Check if layer is added to the project
+                if QgsProject.instance().mapLayersByName(type_layer_name):
+                    print(f"Layer '{type_layer_name}' successfully added to the project.")
+                else:
+                    print(f"Failed to add layer '{type_layer_name}' to the project.")
+                # 현재 QGIS 프로젝트의 CRS 가져오기
+                project_crs = QgsProject.instance().crs()
+                # CRS의 EPSG 코드 출력
+                print(f"Current project CRS: {project_crs.authid()}")
+                # CRS의 이름 출력
+                print(f"CRS Name: {project_crs.description()}")
+                # CRS의 WKT(Well-Known Text) 표현 출력
+                print(f"CRS WKT: {project_crs.toWkt()}")
+                print(f"Current layer crs: {current_crs}\n")
+
 
             if junctions or pipes:
                 # Move layers above TileLayer
@@ -466,3 +577,19 @@ def pipes_network(parent, file):
                 if junctions and pipes:
                     order.insert(0, order.pop())
                 root.setCustomLayerOrder(order)
+
+            try:
+                # Map Tips 전역 설정 활성화
+                from qgis.PyQt.QtCore import QSettings
+                QSettings().setValue("qgis/enableMapTips", True)
+
+                # 더 안전하게, 액션 트리거 사용 시도
+                try:
+                    if not parent.iface.actionMapTips().isChecked():
+                        parent.iface.actionMapTips().trigger()
+                except:
+                    pass  # 액션이 없거나 접근할 수 없는 경우 무시
+
+                print("Map Tips is successfully activated.")
+            except Exception as e:
+                print(f"An error occurred while activating Map Tips: {e}")

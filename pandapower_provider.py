@@ -79,16 +79,26 @@ class PandapowerProvider(QgsVectorDataProvider):
         self._provider_options = providerOptions
         self._flags = flags
 
+        # 🔄 한 번만 네트워크 데이터 가져오기
+        print("=" * 50)
+        print("pandapower_provider.py, init method")
+        print(f"[DEBUG] Getting network data from container with URI: {uri}")
         # Bring network data from container
         network_data = NetworkContainer.get_network(uri)
         if network_data is None:
+            print(f"[DEBUG] Failed to get network data from container")
             self._is_valid = False
             print("Warning: Failed to load Network data from Network container.\n")
             return
+        else:
+            print(f"[DEBUG] Successfully got network data from container")
+            print(f"[DEBUG] Network data keys: {list(network_data.keys())}")
 
         # Setting network data
         self.net = network_data['net']
-        print("\nvalue of net: ", self.net)
+        print(f"\n[DEBUG] Network object type: {type(self.net)}")
+        print(f"[DEBUG] Network object keys: {list(self.net.keys()) if hasattr(self.net, 'keys') else 'No keys method'}")
+        print("[DEBUG] value of net: ", self.net)
 
         if self.uri_parts['network_type'] in ['bus', 'line']:
             self.vn_kv = network_data['vn_kv']
@@ -97,9 +107,11 @@ class PandapowerProvider(QgsVectorDataProvider):
         else:
             raise ValueError("Invalid network_type. Expected 'bus', 'line', 'junction', 'pipe'.")  # necessary?
         self.network_type = self.uri_parts['network_type']
-
         self.type_layer_name = network_data['type_layer_name']
-        print("type of layer name: \n", self.type_layer_name, "\n")
+
+        print(f"\nType of layer name: {self.type_layer_name}")
+        print(f"Network type: {self.network_type}")
+        print(f"vn_kv/pn_bar: {getattr(self, 'vn_kv', getattr(self, 'pn_bar', 'None'))}")
 
         self.current_crs = int(network_data['current_crs']) if network_data['current_crs'] else 4326
         self.crs = self.sourceCrs()
@@ -115,14 +127,44 @@ class PandapowerProvider(QgsVectorDataProvider):
         self._save_in_progress = False  # Indicates whether a save operation is in progress
         self._save_thread = None  # QThread instance performing the save operation
 
-        print("")
-        print("")
+        # print("")
+        # print("")
+        #
+        # print("=" * 50)
+        # print("pandapower_provider.py, init method")
+        # # Bring network data from container
+        # print(f"[DEBUG] Getting network data from container with URI: {uri}")
+        # #network_data = NetworkContainer.get_network(uri)
+        #
+        # if network_data is None:
+        #     print(f"[DEBUG] Failed to get network data from container")
+        #     self._is_valid = False
+        #     print("Warning: Failed to load Network data from Network container.\n")
+        #     return
+        # else:
+        #     print(f"[DEBUG] Successfully got network data from container")
+        #     print(f"[DEBUG] Network data keys: {list(network_data.keys())}")
+        #
+        # # Setting network data
+        # self.net = network_data['net']
+        # print(f"[DEBUG] Network object type: {type(self.net)}")
+        # print(
+        #     f"[DEBUG] Network object keys: {list(self.net.keys()) if hasattr(self.net, 'keys') else 'No keys method'}")
+        # print("=" * 50)
 
+        # 🌟 새로운 기능: NetworkContainer에 "나 알림 받을래!" 등록
+        NetworkContainer.add_listener(self.uri, self)
+        print(f"📢 Provider {self.uri}: NetworkContainer에 알림 등록 완료")
+        print("=" * 50)
+
+    # 원본
     def merge_df(self):
         """
         Merges the network type dataframe with its corresponding result dataframe.
         Only includes data with matching vn_kv value.
         """
+        print("=" * 50)
+        print("=" * 50)
         print("\n\nnow in merge_df\n\n")
 
         try:
@@ -148,40 +190,62 @@ class PandapowerProvider(QgsVectorDataProvider):
             if df_res_network_type is not None:
                 print(f"Original df_res_{self.network_type} shape: {df_res_network_type.shape}")
 
-            # Filter vn_kv before sort
-            if self.vn_kv is not None:
-                # If line, pipe: merge all
-                if self.network_type == 'bus':
-                    filtered_indices = df_network_type[df_network_type['vn_kv'] == self.vn_kv].index
-                    df_network_type = df_network_type.loc[filtered_indices]
-                    if df_res_network_type is not None:
-                        df_res_network_type = df_res_network_type.loc[filtered_indices]
-                elif self.network_type == 'junction':   # pn_bar
-                    if 'vn_kv' in df_network_type.columns:
+            # 🔍 핵심: 어떤 상황인지 판단하기
+            has_result_data = (df_res_network_type is not None and
+                               not df_res_network_type.empty and
+                               len(df_res_network_type) > 0)
+
+            # when res column not empty
+            if has_result_data:
+                print("✅ 계산 결과가 있어요! 기존 방식 사용")
+                # Filter vn_kv before sort
+                if self.vn_kv is not None:
+                    # If line, pipe: merge all
+                    if self.network_type == 'bus':
                         filtered_indices = df_network_type[df_network_type['vn_kv'] == self.vn_kv].index
                         df_network_type = df_network_type.loc[filtered_indices]
                         if df_res_network_type is not None:
                             df_res_network_type = df_res_network_type.loc[filtered_indices]
-                print(f"After filtering with vn_kv={self.vn_kv}, df_{self.network_type} shape: {df_network_type.shape}")
+                    elif self.network_type == 'junction':   # pn_bar
+                        if 'vn_kv' in df_network_type.columns:
+                            filtered_indices = df_network_type[df_network_type['vn_kv'] == self.vn_kv].index
+                            df_network_type = df_network_type.loc[filtered_indices]
+                            if df_res_network_type is not None:
+                                df_res_network_type = df_res_network_type.loc[filtered_indices]
+                    print(f"After filtering with vn_kv={self.vn_kv}, df_{self.network_type} shape: {df_network_type.shape}")
 
-            # Sort indices
-            df_network_type.sort_index(inplace=True)
-            if df_res_network_type is not None:
-                df_res_network_type.sort_index(inplace=True)
+                # Sort indices
+                df_network_type.sort_index(inplace=True)
+                if df_res_network_type is not None:
+                    df_res_network_type.sort_index(inplace=True)
 
-            print(f"After sorting df_{self.network_type}\n", df_network_type.head())
-            print(f"After sorting df_res_{self.network_type}\n", df_res_network_type.head())
+                print(f"After sorting df_{self.network_type}\n", df_network_type.head())
+                print(f"After sorting df_res_{self.network_type}\n", df_res_network_type.head())
 
-            # Check if the result dataframe exists
-            if df_res_network_type is not None:
-                # Merge the two dataframes on their indices
-                self.df = pd.merge(df_network_type, df_res_network_type, left_index=True, right_index=True, suffixes=('', '_res'))
-                print("Merged DataFrame (1):") # Debugging
-                print(self.df.head())
-            else:
-                # If the result dataframe does not exist, use only the network type dataframe
-                self.df = df_network_type
-                print(f"Warning: No res_{self.network_type} exist. Only {self.network_type} returned.")
+                # Check if the result dataframe exists
+                if df_res_network_type is not None:
+                    # Merge the two dataframes on their indices
+                    self.df = pd.merge(df_network_type, df_res_network_type, left_index=True, right_index=True, suffixes=('', '_res'))
+                    print("Merged DataFrame (1):") # Debugging
+                    print(self.df.head())
+                else:
+                    # If the result dataframe does not exist, use only the network type dataframe
+                    self.df = df_network_type
+                    print(f"Warning: No res_{self.network_type} exist. Only {self.network_type} returned.")
+
+            # when res column of json file is cleared
+            elif not has_result_data:
+                print("⚠️ 계산 결과가 없어요! 새로운 방식 사용")
+
+                # 🎯 핵심: 기본 데이터에 빈 결과 컬럼들 추가
+                self.df = df_network_type.copy()  # 기본 데이터 복사
+
+                # 🔧 빈 컬럼들 추가
+                res_columns = df_res_network_type.columns.tolist()
+                for col_name in res_columns:
+                    self.df[col_name] = None  # 또는 적절한 기본값
+
+                print(f"✅ {len(res_columns)}개의 빈 결과 컬럼 추가 완료!")
 
             # Check if the merged dataframe is empty
             if self.df.empty:
@@ -195,11 +259,152 @@ class PandapowerProvider(QgsVectorDataProvider):
 
             print("Merged DataFrame (2):")  # Debugging
             print(self.df.head())
-            print("")
+            print("="*50)
+            print("=" * 50)
 
         except Exception as e:
             print(f"Error merging dataframes for {self.network_type}: {str(e)}")
+            print("=" * 50)
+            print("=" * 50)
             return pd.DataFrame()  # Return an empty DataFrame in case of error
+
+    # 1차 수정본 - 핵심 수정: vn_kv 필터링을 공통으로 먼저 적용
+    # 왜 주석처리됐는지 알아보기
+    # def merge_df(self):
+    #     """
+    #     Merges the network type dataframe with its corresponding result dataframe.
+    #     Only includes data with matching vn_kv value.
+    #     """
+    #     print("=" * 50)
+    #     print("=" * 50)
+    #     print("\n\nnow in merge_df\n\n")
+    #
+    #     try:
+    #         # Get the dataframes for the network type and its result
+    #         df_network_type = getattr(self.net, self.network_type)
+    #         df_res_network_type = getattr(self.net, f'res_{self.network_type}')
+    #
+    #         # df_network_type의 인덱스를 출력합니다.
+    #         print(f"Index of df_{self.network_type}:")
+    #         print(df_network_type.index)  # Debugging
+    #         # df_res_network_type의 인덱스를 출력합니다.
+    #         print(f"Index of df_res_{self.network_type}:")
+    #         print(df_res_network_type.index)
+    #
+    #         if df_network_type is None:
+    #             print(f"Error: No dataframe found for {self.network_type}.")
+    #             self.df = pd.DataFrame()  # Set to empty DataFrame
+    #             return
+    #
+    #         print(f"Before sorting df_{self.network_type}\n", df_network_type.head())
+    #         print(f"Before sorting df_res_{self.network_type}\n", df_res_network_type.head())
+    #         print(f"Original df_{self.network_type} shape: {df_network_type.shape}")
+    #         if df_res_network_type is not None:
+    #             print(f"Original df_res_{self.network_type} shape: {df_res_network_type.shape}")
+    #
+    #         # 🔍 핵심: 어떤 상황인지 판단하기
+    #         has_result_data = (df_res_network_type is not None and
+    #                            not df_res_network_type.empty and
+    #                            len(df_res_network_type) > 0)
+    #
+    #         # 🎯 핵심 수정: vn_kv 필터링을 공통으로 먼저 적용
+    #         # Filter vn_kv BEFORE checking result data
+    #         original_df_network_type = df_network_type.copy()  # 원본 백업
+    #
+    #         if hasattr(self, 'vn_kv') and self.vn_kv is not None:
+    #             print(f"🔍 vn_kv 필터링 적용: {self.vn_kv}")
+    #
+    #             if self.network_type == 'bus':
+    #                 # 버스의 경우 vn_kv로 필터링
+    #                 filtered_indices = df_network_type[df_network_type['vn_kv'] == self.vn_kv].index
+    #                 df_network_type = df_network_type.loc[filtered_indices]
+    #                 print(f"🔍 버스 필터링 후 shape: {df_network_type.shape}")
+    #
+    #                 # 결과 데이터도 같은 인덱스로 필터링
+    #                 if df_res_network_type is not None and not df_res_network_type.empty:
+    #                     df_res_network_type = df_res_network_type.loc[
+    #                         df_res_network_type.index.intersection(filtered_indices)
+    #                     ]
+    #                     print(f"🔍 결과 데이터 필터링 후 shape: {df_res_network_type.shape}")
+    #
+    #             elif self.network_type == 'junction':  # pn_bar의 경우
+    #                 if hasattr(self, 'pn_bar') and self.pn_bar is not None:
+    #                     if 'pn_bar' in df_network_type.columns:
+    #                         filtered_indices = df_network_type[df_network_type['pn_bar'] == self.pn_bar].index
+    #                         df_network_type = df_network_type.loc[filtered_indices]
+    #
+    #                         if df_res_network_type is not None and not df_res_network_type.empty:
+    #                             df_res_network_type = df_res_network_type.loc[
+    #                                 df_res_network_type.index.intersection(filtered_indices)
+    #                             ]
+    #
+    #             # line과 pipe는 from_bus/to_bus를 통해 연결된 것들만 포함
+    #             elif self.network_type in ['line', 'pipe']:
+    #                 # 이미 ppqgis_import.py에서 필터링된 상태로 전달됨
+    #                 pass
+    #
+    #         # 필터링 후 상태 확인
+    #         has_result_data = (df_res_network_type is not None and
+    #                            not df_res_network_type.empty and
+    #                            len(df_res_network_type) > 0)
+    #
+    #         # when res column not empty
+    #         if has_result_data:
+    #             print("✅ 계산 결과가 있어요! 기존 방식 사용")
+    #
+    #             # Sort indices
+    #             df_network_type.sort_index(inplace=True)
+    #             df_res_network_type.sort_index(inplace=True)
+    #
+    #             print(f"After sorting df_{self.network_type}\n", df_network_type.head())
+    #             print(f"After sorting df_res_{self.network_type}\n", df_res_network_type.head())
+    #
+    #             # Merge the two dataframes on their indices
+    #             self.df = pd.merge(df_network_type, df_res_network_type, left_index=True, right_index=True,
+    #                                suffixes=('', '_res'))
+    #             print("Merged DataFrame (1):")  # Debugging
+    #             print(self.df.head())
+    #
+    #         # when res column of json file is cleared
+    #         elif not has_result_data:
+    #             print("⚠️ 계산 결과가 없어요! 새로운 방식 사용")
+    #
+    #             # 🎯 핵심: 이미 필터링된 기본 데이터 사용
+    #             self.df = df_network_type.copy()  # 필터링된 데이터 복사
+    #             print(f"✅ 필터링된 기본 데이터 shape: {self.df.shape}")
+    #
+    #             # 🔧 빈 결과 컬럼들 추가 (원본 res 컬럼 구조 참고)
+    #             # 원본에서 res 컬럼 구조 가져오기
+    #             original_res = getattr(self.net, f'res_{self.network_type}')
+    #             if original_res is not None and not original_res.empty:
+    #                 res_columns = original_res.columns.tolist()
+    #                 for col_name in res_columns:
+    #                     self.df[col_name] = None  # 또는 적절한 기본값
+    #                 print(f"✅ {len(res_columns)}개의 빈 결과 컬럼 추가 완료!")
+    #             else:
+    #                 print("⚠️ 원본 결과 컬럼 구조를 찾을 수 없음")
+    #
+    #         # Check if the merged dataframe is empty
+    #         if self.df.empty:
+    #             print(f"Warning: Merged dataframe for {self.network_type} is empty.")
+    #
+    #         # Create 'pp_type' and 'pp_index' columns
+    #         self.df.insert(0, 'pp_type', self.network_type)
+    #         self.df.insert(1, 'pp_index', self.df.index)
+    #
+    #         print("Final DataFrame:")  # Debugging
+    #         print(f"Shape: {self.df.shape}")
+    #         print(f"Columns: {list(self.df.columns)}")
+    #         print(self.df.head())
+    #         print("=" * 50)
+    #         print("=" * 50)
+    #
+    #     except Exception as e:
+    #         print(f"Error merging dataframes for {self.network_type}: {str(e)}")
+    #         print("=" * 50)
+    #         print("=" * 50)
+    #         return pd.DataFrame()  # Return an empty DataFrame in case of error
+
 
 
     def fields(self) -> QgsFields:
@@ -436,6 +641,125 @@ class PandapowerProvider(QgsVectorDataProvider):
             import traceback
             traceback.print_exc()
             return False
+
+
+
+
+    # def on_update_changed_network(self, network_data):
+    #     """
+    #     ✅ 최종 안정화된 버전 - 디버깅 코드 제거
+    #     NetworkContainer로부터 "데이터 바뀌었어!" 알림을 받는 메서드
+    #     """
+    #     try:
+    #         # 1️⃣ 네트워크 객체 업데이트
+    #         self.net = network_data['net']
+    #
+    #         # 2️⃣ 데이터프레임 재생성 (결과 컬럼 포함)
+    #         self.fields_list = None  # 필드 캐시 초기화
+    #         self.df = None  # 데이터프레임 캐시 초기화
+    #
+    #         # 3️⃣ QGIS에게 데이터 변경 알림
+    #         self.dataChanged.emit()
+    #
+    #         print(f"✅ Provider {self.uri}: 데이터 업데이트 완료")
+    #
+    #     except Exception as e:
+    #         print(f"❌ Provider {self.uri}: 업데이트 실패 - {str(e)}")
+    #         # 개별 Provider 실패는 전체 시스템을 중단하지 않음
+
+    def on_update_changed_network(self, network_data):
+        """
+        🛡️ 최종 안전화된 데이터 업데이트 - Race Condition 방지
+        """
+        old_net = self.net
+        try:
+            print(f"📨 Provider {self.uri}: 안전한 데이터 업데이트 시작")
+
+            # 🔒 1단계: 네트워크 객체 업데이트 (안전)
+            #old_net = self.net
+            self.net = network_data['net']
+
+            # 🔒 2단계: 새로운 데이터프레임을 별도 변수에서 생성 (Race Condition 방지)
+            new_df = self._create_updated_dataframe()
+
+            # 🔒 3단계: 검증 후 한 번에 교체 (Atomic Operation)
+            if new_df is not None and not new_df.empty:
+                # 성공적으로 생성된 경우에만 교체
+                self.fields_list = None  # 필드 캐시 초기화
+                self.df = new_df  # 새 데이터프레임으로 교체
+
+                # 🔒 4단계: QGIS 알림 (데이터가 준비된 후)
+                self.dataChanged.emit()
+                print(f"✅ Provider {self.uri}: 안전한 업데이트 완료 (크기: {len(new_df)})")
+            else:
+                # 실패한 경우 기존 데이터 유지
+                print(f"⚠️ Provider {self.uri}: 새 데이터 생성 실패, 기존 데이터 유지")
+
+        except Exception as e:
+            print(f"❌ Provider {self.uri}: 업데이트 실패 - {str(e)}")
+            # 오류 발생 시 원본 상태 복원 시도
+            if 'old_net' in locals():
+                self.net = old_net
+
+    def _create_updated_dataframe(self):
+        """
+        🔧 별도 함수에서 안전하게 새 데이터프레임 생성
+        기존 merge_df() 로직을 복사하되, self.df를 직접 수정하지 않음
+        """
+        try:
+            # 기존 merge_df 로직을 새 변수에서 실행
+            df_network_type = getattr(self.net, self.network_type)
+            df_res_network_type = getattr(self.net, f'res_{self.network_type}')
+
+            if df_network_type is None:
+                print(f"⚠️ {self.network_type} 데이터가 없음")
+                return None
+
+            # 계산 결과 확인
+            has_result_data = (df_res_network_type is not None and
+                               not df_res_network_type.empty and
+                               len(df_res_network_type) > 0)
+
+            if has_result_data:
+                print("✅ 계산 결과가 있어요! 기존 방식 사용")
+
+                # vn_kv 필터링 (기존 로직)
+                if hasattr(self, 'vn_kv') and self.vn_kv is not None:
+                    if self.network_type == 'bus':
+                        filtered_indices = df_network_type[df_network_type['vn_kv'] == self.vn_kv].index
+                        df_network_type = df_network_type.loc[filtered_indices]
+                        df_res_network_type = df_res_network_type.loc[filtered_indices]
+
+                # 정렬
+                df_network_type.sort_index(inplace=True)
+                df_res_network_type.sort_index(inplace=True)
+
+                # 병합
+                new_df = pd.merge(df_network_type, df_res_network_type,
+                                  left_index=True, right_index=True, suffixes=('', '_res'))
+            else:
+                print("⚠️ 계산 결과가 없어요! 새로운 방식 사용")
+                new_df = df_network_type.copy()
+
+                # 빈 결과 컬럼들 추가
+                if df_res_network_type is not None:
+                    res_columns = df_res_network_type.columns.tolist()
+                    for col_name in res_columns:
+                        new_df[col_name] = None
+
+            # pp_type과 pp_index 컬럼 추가
+            new_df.insert(0, 'pp_type', self.network_type)
+            new_df.insert(1, 'pp_index', new_df.index)
+
+            print(f"✅ 새 데이터프레임 생성 완료: {len(new_df)}행")
+            return new_df
+
+        except Exception as e:
+            print(f"❌ 데이터프레임 생성 실패: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None
+
 
 
     def update_geodata_in_json_async(self, callback=None):
@@ -762,6 +1086,8 @@ class PandapowerProvider(QgsVectorDataProvider):
             return QgsWkbTypes.LineString
 
     def unload(self):
+        # Remove from listener
+        NetworkContainer.remove_listener(self.uri, self)
         # Wait until the running save thread completes
         if self._save_thread and self._save_thread.isRunning():
             self._save_thread.wait()

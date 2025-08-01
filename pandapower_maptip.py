@@ -24,6 +24,14 @@ class MapTipUtils:
         if not layer or not isinstance(layer, QgsVectorLayer):
             return False
 
+        # 🆕 res 데이터 상태 확인 (간단한 방법)
+        has_calculation_results = MapTipUtils.check_has_calculation_results(layer)
+
+        # 🆕 계산 결과가 없으면 간단한 템플릿 사용하고 바로 return
+        if not has_calculation_results:
+            MapTipUtils.set_basic_template(layer, network_type)
+            return True
+
         # 기본 스타일 정의
         css_style = """
         <style>
@@ -322,3 +330,106 @@ class MapTipUtils:
         MapTipUtils.enable_map_tips()
 
         return count
+
+
+    @staticmethod
+    def check_has_calculation_results(layer):
+        """레이어에 계산 결과가 있는지 간단히 확인"""
+        try:
+            # 첫 번째 피처 가져오기
+            features = list(layer.getFeatures())
+            if not features:
+                return False
+
+            first_feature = features[0]
+
+            # 네트워크 타입에 따라 확인할 필드 결정
+            layer_name = layer.name().lower()
+            if 'bus' in layer_name or 'junction' in layer_name:
+                # 버스/정션: vm_pu 또는 비슷한 결과 필드 확인
+                vm_value = first_feature.attribute('vm_pu')
+                return vm_value is not None and str(vm_value) != 'NULL'
+            elif 'line' in layer_name or 'pipe' in layer_name:
+                # 라인/파이프: loading_percent 또는 비슷한 결과 필드 확인
+                loading_value = first_feature.attribute('loading_percent')
+                return loading_value is not None and str(loading_value) != 'NULL'
+
+            return False
+        except Exception as e:
+            print(f"⚠️ 계산 결과 확인 중 오류: {str(e)}")
+            return False
+
+
+    @staticmethod
+    def set_basic_template(layer, network_type):
+        """계산 결과가 없을 때 사용할 간단한 템플릿 설정"""
+
+        # 네트워크 타입이 없으면 레이어 이름에서 추출
+        if not network_type:
+            layer_name_parts = layer.name().split('_')
+            if len(layer_name_parts) > 0:
+                last_part = layer_name_parts[-1].lower()
+                if last_part in ['bus', 'line', 'junction', 'pipe']:
+                    network_type = last_part
+
+        # 간단한 CSS
+        basic_css = """
+        <style>
+            .pp-basic { font-family: Arial; background: #f0f8ff; padding: 10px; 
+                       border: 1px solid #4682b4; border-radius: 5px; }
+            .pp-title { color: #1e90ff; font-weight: bold; margin-bottom: 8px; }
+            .pp-table { width: 100%; }
+            .pp-table td { padding: 2px 4px; }
+            .pp-warning { background: #fffacd; border-left: 3px solid #ffa500; 
+                         padding: 5px; margin-top: 8px; font-size: 0.9em; }
+        </style>
+        """
+
+        # 네트워크 타입별 기본 정보만 표시
+        if network_type == "bus":
+            template = basic_css + """
+            <div class="pp-basic">
+                <div class="pp-title">🔌 Bus [% "pp_index" %]</div>
+                <table class="pp-table">
+                    <tr><td>Name:</td><td>[% COALESCE("name", "Unnamed") %]</td></tr>
+                    <tr><td>Voltage Level:</td><td>[% "vn_kv" %] kV</td></tr>
+                    <tr><td>Type:</td><td>[% COALESCE("type", "N/A") %]</td></tr>
+                </table>
+                <div class="pp-warning">
+                    ⚠️ 계산 결과 없음 - RunPP 실행 필요
+                </div>
+            </div>
+            """
+        elif network_type == "line":
+            template = basic_css + """
+            <div class="pp-basic">
+                <div class="pp-title">🔗 Line [% "pp_index" %]</div>
+                <table class="pp-table">
+                    <tr><td>From Bus:</td><td>[% "from_bus" %]</td></tr>
+                    <tr><td>To Bus:</td><td>[% "to_bus" %]</td></tr>
+                    <tr><td>Length:</td><td>[% "length_km" %] km</td></tr>
+                    <tr><td>Standard Type:</td><td>[% COALESCE("std_type", "N/A") %]</td></tr>
+                </table>
+                <div class="pp-warning">
+                    ⚠️ 계산 결과 없음 - RunPP 실행 필요
+                </div>
+            </div>
+            """
+        else:
+            # 기본 템플릿 (junction, pipe, 기타)
+            template = basic_css + """
+            <div class="pp-basic">
+                <div class="pp-title">📍 [% "pp_type" %] [% "pp_index" %]</div>
+                <table class="pp-table">
+                    <tr><td>Name:</td><td>[% COALESCE("name", "Unnamed") %]</td></tr>
+                    <tr><td>Type:</td><td>[% "pp_type" %]</td></tr>
+                </table>
+                <div class="pp-warning">
+                    ⚠️ 계산 결과 없음 - RunPP 실행 필요
+                </div>
+            </div>
+            """
+
+        # 템플릿 적용
+        layer.setMapTipTemplate(template)
+        layer.setMapTipsEnabled(True)
