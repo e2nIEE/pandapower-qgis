@@ -155,6 +155,8 @@ class PandapowerProvider(QgsVectorDataProvider):
         # 🌟 새로운 기능: NetworkContainer에 "나 알림 받을래!" 등록
         NetworkContainer.add_listener(self.uri, self)
         print(f"📢 Provider {self.uri}: NetworkContainer에 알림 등록 완료")
+        print(f"📋 현재 등록된 리스너들: {NetworkContainer._listeners}")
+        print(f"📋 내가 등록됐나?: {self in NetworkContainer._listeners.get(self.uri, [])}")
         print("=" * 50)
 
     # 원본
@@ -654,6 +656,7 @@ class PandapowerProvider(QgsVectorDataProvider):
     #         # 1️⃣ 네트워크 객체 업데이트
     #         self.net = network_data['net']
     #
+    #         여기서 그냥 self.net 데이터 그대로 받으면 안됨? 웨안되게 해놧지?
     #         # 2️⃣ 데이터프레임 재생성 (결과 컬럼 포함)
     #         self.fields_list = None  # 필드 캐시 초기화
     #         self.df = None  # 데이터프레임 캐시 초기화
@@ -667,30 +670,41 @@ class PandapowerProvider(QgsVectorDataProvider):
     #         print(f"❌ Provider {self.uri}: 업데이트 실패 - {str(e)}")
     #         # 개별 Provider 실패는 전체 시스템을 중단하지 않음
 
+
+    #0708 새벽에 디버깅하기 위해 주석처리중
     def on_update_changed_network(self, network_data):
         """
         🛡️ 최종 안전화된 데이터 업데이트 - Race Condition 방지
         """
+        print("\n")
+        print("="*50)
+        print(f"🚚 여기는 on_update_changed_network: 네트워크 컨테이너에서 {self.uri} 배달 받음!")  # ← 이거 추가
+        print(f"🔔 {self.uri}: 알림 받음!")
+        print(f"🔔 이전 데이터 크기: {len(self.df) if self.df is not None else 0}")
+
         old_net = self.net
         try:
             print(f"📨 Provider {self.uri}: 안전한 데이터 업데이트 시작")
 
             # 🔒 1단계: 네트워크 객체 업데이트 (안전)
-            #old_net = self.net
             self.net = network_data['net']
 
             # 🔒 2단계: 새로운 데이터프레임을 별도 변수에서 생성 (Race Condition 방지)
             new_df = self._create_updated_dataframe()
+            if new_df is None:  # ← 이 경우 렌더러가 빈 데이터를 받을 수 있음
+                print("⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️ DataFrame 생성 실패! ⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️")
 
             # 🔒 3단계: 검증 후 한 번에 교체 (Atomic Operation)
             if new_df is not None and not new_df.empty:
                 # 성공적으로 생성된 경우에만 교체
-                self.fields_list = None  # 필드 캐시 초기화
+                #self.fields_list = None  # 필드 캐시 초기화
                 self.df = new_df  # 새 데이터프레임으로 교체
 
-                # 🔒 4단계: QGIS 알림 (데이터가 준비된 후)
-                self.dataChanged.emit()
-                print(f"✅ Provider {self.uri}: 안전한 업데이트 완료 (크기: {len(new_df)})")
+                # # 🔒 4단계: QGIS 알림 (데이터가 준비된 후)
+                # print(f"🔔 새 데이터 크기: {len(new_df) if new_df is not None else 0}")
+                # self.dataChanged.emit()
+                # print(f"🔔 dataChanged 신호 발생!")
+                # print(f"✅ Provider {self.uri}: 안전한 업데이트 완료 (크기: {len(new_df)})")
             else:
                 # 실패한 경우 기존 데이터 유지
                 print(f"⚠️ Provider {self.uri}: 새 데이터 생성 실패, 기존 데이터 유지")

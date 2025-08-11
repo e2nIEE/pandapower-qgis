@@ -365,15 +365,15 @@ class ppRunDialog(QDialog):
             # 6. 결과에 따른 처리
             if success:
                 self.add_progress_message("✅ Calculation completed!")
-                QtCore.QCoreApplication.processEvents()
+                #QtCore.QCoreApplication.processEvents() # 크래쉬 발생 지점
 
                 # 색상 업데이트
                 if parameters.get('update_renderer', False):
                     self.add_progress_message("🎨 Displaying results on the map...")
-                    QtCore.QCoreApplication.processEvents()
-                    self.update_map_colors()
-                    self.add_progress_message("🎨 Map color update completed!")
-                    QtCore.QCoreApplication.processEvents()
+                    #QtCore.QCoreApplication.processEvents()
+                    #self.update_map_colors()
+                    self.add_progress_message("🎨 Map color update completed!") # 여기까지 출력된 후 크래쉬 or 종료
+                    #QtCore.QCoreApplication.processEvents()
 
                 time.sleep(2)  # 결과를 보여주는 시간
                 self.calculation_success()  # 성공 처리
@@ -439,49 +439,59 @@ class ppRunDialog(QDialog):
         except Exception as e:
             print(f"⚠️ 메시지 추가 오류: {str(e)}")
 
+    # 필요없는 코드일수도. emit 오지게 쓰는데
     def update_map_colors(self):
         """계산 결과를 지도에 색깔로 표시하는 함수"""
         try:
             print("🎨 지도 색상 업데이트 시작...")
-
-            # QGIS에서 현재 열려있는 모든 지도 레이어들 가져오기
-            from qgis.core import QgsProject
-            layers = QgsProject.instance().mapLayers()
-
-            updated_count = 0  # 업데이트된 레이어 개수 세기
-
-            # 각 레이어를 하나씩 확인해보기
-            for layer_id, layer in layers.items():
-                try:
-                    # 우리가 만든 전력망 레이어인지 확인하기
-                    if (hasattr(layer, 'dataProvider') and
-                            layer.dataProvider().name() == "PandapowerProvider" and
-                            layer.source() == self.uri):
-                        print(f"🎨 레이어 업데이트: {layer.name()}")
-
-                        # 레이어에게 "데이터가 바뀌었으니 다시 그려!" 명령하기
-                        layer.dataProvider().dataChanged.emit()
-                        layer.triggerRepaint()
-                        updated_count += 1
-
-                except Exception as e:
-                    print(f"⚠️ 레이어 {layer_id} 업데이트 오류: {str(e)}")
-                    continue  # 이 레이어는 건너뛰고 다음 레이어로
-
-            # 업데이트 결과 확인
-            if updated_count > 0:
-                print(f"✅ {updated_count}개 레이어 색상 업데이트 완료")
-
-                # 전체 지도 화면도 새로고침하기
-                from qgis.utils import iface
-                if iface:
-                    iface.mapCanvas().refresh()
-                    print("✅ 지도 캔버스 새로고침 완료")
-            else:
-                print("⚠️ 업데이트할 레이어를 찾을 수 없습니다")
+            # 전체 지도 캔버스만 새로고침 (렌더러 설정은 하지 않음)
+            from qgis.utils import iface
+            if iface:
+                iface.mapCanvas().refresh()
+                print("✅ 지도 캔버스 새로고침 완료")
+                print("⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️⚠️mapCanvas().refresh가 crash 원인인가?⚠️⚠️⚠️⚠️⚠️⚠️⚠️")
 
         except Exception as e:
-            print(f"⚠️ 지도 색상 업데이트 오류: {str(e)}")
+            print(f"⚠️ 지도 새로고침 오류: {str(e)}")
+
+        #     # QGIS에서 현재 열려있는 모든 지도 레이어들 가져오기
+        #     from qgis.core import QgsProject
+        #     layers = QgsProject.instance().mapLayers()
+        #
+        #     updated_count = 0  # 업데이트된 레이어 개수 세기
+        #
+        #     # 각 레이어를 하나씩 확인해보기
+        #     for layer_id, layer in layers.items():
+        #         try:
+        #             # 우리가 만든 전력망 레이어인지 확인하기
+        #             if (hasattr(layer, 'dataProvider') and
+        #                     layer.dataProvider().name() == "PandapowerProvider" and
+        #                     layer.source() == self.uri):
+        #                 print(f"🎨 레이어 업데이트: {layer.name()}")
+        #
+        #                 # 레이어에게 "데이터가 바뀌었으니 다시 그려!" 명령하기
+        #                 layer.dataProvider().dataChanged.emit()
+        #                 layer.triggerRepaint()
+        #                 updated_count += 1
+        #
+        #         except Exception as e:
+        #             print(f"⚠️ 레이어 {layer_id} 업데이트 오류: {str(e)}")
+        #             continue  # 이 레이어는 건너뛰고 다음 레이어로
+        #
+        #     # 업데이트 결과 확인
+        #     if updated_count > 0:
+        #         print(f"✅ {updated_count}개 레이어 색상 업데이트 완료")
+        #
+        #         # 전체 지도 화면도 새로고침하기
+        #         from qgis.utils import iface
+        #         if iface:
+        #             iface.mapCanvas().refresh()
+        #             print("✅ 지도 캔버스 새로고침 완료")
+        #     else:
+        #         print("⚠️ 업데이트할 레이어를 찾을 수 없습니다")
+        #
+        # except Exception as e:
+        #     print(f"⚠️ 지도 색상 업데이트 오류: {str(e)}")
 
     def calculation_success(self):
         """계산이 성공했을 때 마무리 처리"""

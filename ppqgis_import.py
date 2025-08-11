@@ -86,15 +86,20 @@ def power_network(parent, file) -> None:
         run_pandapower = parent.dlg_import.runpp.isChecked()
         render = parent.dlg_import.gradRender.isChecked()
 
-        # if res column is cleared, render off
-        # 똑똑한 판단: 계산 결과가 없으면 자동으로 간단한 방식 사용
-        has_result_data = (hasattr(net, 'res_bus') and
-                           net.res_bus is not None and
-                           not net.res_bus.empty and
-                           len(net.res_bus) > 0)
-        if not has_result_data:
-            render = False  # 강제로 간단한 색칠 방식 사용
-            print("⚠️ 계산 결과가 없어서 간단한 색상 방식을 사용합니다")
+        # # if res column is cleared, render off
+        # # 똑똑한 판단: 계산 결과가 없으면 자동으로 간단한 방식 사용
+        # has_result_data = (hasattr(net, 'res_bus') and
+        #                    net.res_bus is not None and
+        #                    not net.res_bus.empty and
+        #                    len(net.res_bus) > 0)
+        # if not has_result_data:
+        #     render = False  # 강제로 간단한 색칠 방식 사용
+        #     print("⚠️ 계산 결과가 없어서 간단한 색상 방식을 사용합니다")
+
+        ''' 일단 위에 이거 지우고, 원본에서 render 체크 안 되어있으면 무슨 일이 일어나는지 알아봐야겠네.    
+        다이얼로그에 체크란이 있나보네.
+        만약에 여기서 체크가 안 되어있다면... runpp 쪽에서 렌더러 만들 수 있는 능력이 있어야 하는 게 아닐까?
+        '''
 
         try:
             crs = int(parent.dlg_import.projectionSelect.crs().authid().split(':')[1])
@@ -119,66 +124,56 @@ def power_network(parent, file) -> None:
         bus_color_ramp = QgsGradientColorRamp(QColor(BUS_LOW_COLOR), QColor(BUS_HIGH_COLOR))
         line_color_ramp = QgsGradientColorRamp(QColor(LINE_LOW_COLOR), QColor(LINE_HIGH_COLOR))
 
-        # Color lines by load/ buses by voltage
-        # if render:
-        #     classification_methode = QgsApplication.classificationMethodRegistry().method("EqualInterval")
-        #
-        #     # generate symbology for bus layer
-        #     bus_target = "vm_pu"
-        #     min_target = "min_vm_pu"
-        #     max_target = "max_vm_pu"
-        #     # map value from its possible min/max to 0/100
-        #     classification_str = f'scale_linear("{bus_target}", 0.9, 1.1, 0, 100)'
-        #
-        #     bus_renderer = QgsGraduatedSymbolRenderer()
-        #     bus_renderer.setClassificationMethod(classification_methode)
-        #     bus_renderer.setClassAttribute(classification_str)
-        #     # add categories (10 categories, 10% increments)
-        #     for x in range(10):
-        #         low_bound = x * 10
-        #         high_bound = (x + 1) * 10 - .0001
-        #         if x == 9:  # fix for not including 100%
-        #             high_bound = 100
-        #         bus_renderer.addClassRange(
-        #             QgsRendererRange(
-        #                 QgsClassificationRange(f'class {low_bound}-{high_bound}', low_bound, high_bound),
-        #                 QgsMarkerSymbol()
-        #             )
-        #         )
-        #     bus_renderer.updateColorRamp(bus_color_ramp)
-        #
-        #     # generate symbology for line layer
-        #     line_target = "loading_percent"
-        #
-        #     line_renderer = QgsGraduatedSymbolRenderer()
-        #     line_renderer.setClassificationMethod(classification_methode)
-        #     line_renderer.setClassAttribute(line_target)
-        #
-        #     # add categories (10 categories, 10% increments)
-        #     for x in range(10):
-        #         low_bound = x * 10
-        #         high_bound = (x + 1) * 10 - .0001
-        #         if x == 9:  # fix for not including 100%
-        #             high_bound = 100
-        #         line_symbol = QgsLineSymbol()
-        #         line_symbol.setWidth(.6)
-        #         line_renderer.addClassRange(
-        #             QgsRendererRange(
-        #                 QgsClassificationRange(f'class {low_bound}-{high_bound}', low_bound, high_bound),
-        #                 line_symbol
-        #             )
-        #         )
-        #     line_renderer.updateColorRamp(line_color_ramp)
-
-        # Color lines by load/ buses by voltage
+        #Color lines by load/ buses by voltage
         if render:
-            # 🎨 공통 렌더러 함수 사용 (그라데이션 방식)
-            bus_renderer = create_bus_renderer(render=True)
-            line_renderer = create_line_renderer(render=True)
-        else:
-            # 🎨 공통 렌더러 함수 사용 (단일 색상 방식)
-            bus_renderer, bus_color_ramp = create_bus_renderer(render=False)
-            line_renderer, line_color_ramp = create_line_renderer(render=False)
+            classification_methode = QgsApplication.classificationMethodRegistry().method("EqualInterval")
+
+            # generate symbology for bus layer
+            bus_target = "vm_pu"
+            min_target = "min_vm_pu"
+            max_target = "max_vm_pu"
+            # map value from its possible min/max to 0/100
+            classification_str = f'scale_linear("{bus_target}", 0.9, 1.1, 0, 100)'
+
+            bus_renderer = QgsGraduatedSymbolRenderer()
+            bus_renderer.setClassificationMethod(classification_methode)
+            bus_renderer.setClassAttribute(classification_str)
+            # add categories (10 categories, 10% increments)
+            for x in range(10):
+                low_bound = x * 10
+                high_bound = (x + 1) * 10 - .0001
+                if x == 9:  # fix for not including 100%
+                    high_bound = 100
+                bus_renderer.addClassRange(
+                    QgsRendererRange(
+                        QgsClassificationRange(f'class {low_bound}-{high_bound}', low_bound, high_bound),
+                        QgsMarkerSymbol()
+                    )
+                )
+            bus_renderer.updateColorRamp(bus_color_ramp)
+
+            # generate symbology for line layer
+            line_target = "loading_percent"
+
+            line_renderer = QgsGraduatedSymbolRenderer()
+            line_renderer.setClassificationMethod(classification_methode)
+            line_renderer.setClassAttribute(line_target)
+
+            # add categories (10 categories, 10% increments)
+            for x in range(10):
+                low_bound = x * 10
+                high_bound = (x + 1) * 10 - .0001
+                if x == 9:  # fix for not including 100%
+                    high_bound = 100
+                line_symbol = QgsLineSymbol()
+                line_symbol.setWidth(.6)
+                line_renderer.addClassRange(
+                    QgsRendererRange(
+                        QgsClassificationRange(f'class {low_bound}-{high_bound}', low_bound, high_bound),
+                        line_symbol
+                    )
+                )
+            line_renderer.updateColorRamp(line_color_ramp)
 
         # find min and max voltage. Used for finding color of symbols.
         max_kv = max(voltage_levels)

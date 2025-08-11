@@ -40,6 +40,9 @@ if 'network_container' not in sys.modules:
             ✅ 최종 안정화된 버전 - 디버깅 코드 제거
             네트워크 데이터를 등록하고 리스너들에게 알림을 보냅니다
             """
+            print("🚚🚚🚚🚚 NetworkContainer register_network 🚚🚚🚚🚚")
+            print(f"🚚 NetworkContainer: {uri} 배달 시작!")  # ← 이거 추가
+
             # 초기화 플래그
             if not cls._initialized:
                 cls._initialized = True
@@ -53,34 +56,34 @@ if 'network_container' not in sys.modules:
             cls._notify_all_listeners(uri, network_data)
 
 
-        @classmethod
-        def _notify_all_listeners(cls, uri, network_data):
-            """
-            ✅ 최종 안정화된 알림 시스템
-            """
-            if uri in cls._listeners:
-                listeners_count = len(cls._listeners[uri])
-                print(f"📢 {listeners_count}개 리스너에게 알림 발송")
-
-                # 안전한 리스너 목록 복사
-                listeners_copy = cls._listeners[uri].copy()
-
-                success_count = 0
-                for listener in listeners_copy:
-                    try:
-                        # 리스너 유효성 확인
-                        if hasattr(listener, 'isValid') and not listener.isValid():
-                            continue
-
-                        # 실제 업데이트 호출
-                        listener.on_update_changed_network(network_data)
-                        success_count += 1
-
-                    except Exception as e:
-                        print(f"❌ 리스너 알림 실패: {e}")
-                        continue
-
-                print(f"✅ 알림 완료: {success_count}/{listeners_count} 성공")
+        # @classmethod
+        # def _notify_all_listeners(cls, uri, network_data):
+        #     """
+        #     ✅ 최종 안정화된 알림 시스템
+        #     """
+        #     if uri in cls._listeners:
+        #         listeners_count = len(cls._listeners[uri])
+        #         print(f"📢 {listeners_count}개 리스너에게 알림 발송")
+        #
+        #         # 안전한 리스너 목록 복사
+        #         listeners_copy = cls._listeners[uri].copy()
+        #
+        #         success_count = 0
+        #         for listener in listeners_copy:
+        #             try:
+        #                 # 리스너 유효성 확인
+        #                 if hasattr(listener, 'isValid') and not listener.isValid():
+        #                     continue
+        #
+        #                 # 실제 업데이트 호출
+        #                 listener.on_update_changed_network(network_data)
+        #                 success_count += 1
+        #
+        #             except Exception as e:
+        #                 print(f"❌ 리스너 알림 실패: {e}")
+        #                 continue
+        #
+        #         print(f"✅ 알림 완료: {success_count}/{listeners_count} 성공")
 
 
         @classmethod
