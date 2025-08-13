@@ -411,7 +411,3 @@ class ppqgis:
         # 4️⃣ 다이얼로그 실행
         self.dlg_runpp.show()
         result = self.dlg_runpp.exec_()
-
-        # 5️⃣ 실제 작업은 다른 파일로 위임!
-        if result:
-            run_network(self, uri, self.dlg_runpp.get_parameters())

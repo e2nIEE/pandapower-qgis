@@ -4,12 +4,14 @@ import traceback
 from typing import Dict, Any
 from time import sleep
 
-from qgis.core import QgsProject, QgsMessageLog, Qgis
+from qgis.core import QgsProject, QgsMessageLog, Qgis, QgsGraduatedSymbolRenderer, QgsSingleSymbolRenderer, QgsProviderRegistry
 from qgis.utils import iface
 from qgis.PyQt.QtCore import QThread, pyqtSignal
 from qgis.PyQt.QtWidgets import QMessageBox
 
+from renderer_utils import create_power_renderer
 from .network_container import NetworkContainer
+
 
 # run_network(): 주방장 (전체 과정 관리)
 # execute_calculation(): 요리사 (실제 요리 담당)
@@ -626,76 +628,35 @@ def post_process_results(parent, uri, network_data, parameters):
         network_data (dict): 네트워크 데이터
         parameters (dict): 사용자 설정 매개변수
     """
-    # 디버깅 파일 설정
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    debug_file_path = f"C:\\Users\\slee\\Documents\\pp_old\\test\\0708_post_process_results{timestamp}.txt"
-
-    try:
-        os.makedirs(os.path.dirname(debug_file_path), exist_ok=True)
-    except:
-        pass
-
-    def debug_print(message):
-        """화면 출력 + 파일 저장"""
-        print(message)
-        try:
-            with open(debug_file_path, 'a', encoding='utf-8') as f:
-                f.write(message + '\n')
-        except:
-            print("디버깅 로그 파일 생성 실패")
-            pass
-
     try:
         print("\n")
         print("=" * 50)
-        print(f"🚚 여기는 post_process_results!")  # ← 이거 추가
-        debug_print("[DEBUG] post_process_results 0608 version")
+        print(f"🚚 여기는 post_process_results!")
 
-        debug_print("🔬 [DETAIL-1] 세밀한 후처리 분석 시작...")
-        # 🔬 단계 A: NetworkContainer.register_network 분석
-        debug_print("🔬 [DETAIL-A] NetworkContainer.register_network 테스트...")
-        debug_print(f"   - URI: {uri} 🤩🤩🤩🤩🤩🤩🤩🤩")
-        debug_print(f"   - network_data 키들: {list(network_data.keys())}")
-        debug_print(f"   - 현재 NetworkContainer에 등록된 URI 개수: {len(NetworkContainer._networks)}")
-
-
-        #🆕 URI Decoder를 사용해서 파일 경로 추출
-        from qgis.core import QgsProviderRegistry
-
-        debug_print(f"🔍 URI 분석 중: {uri}")
-
+        # uri로부터 데이터 가져오기 - runpp가 uri 한개만 파라미터로 받아서 여러개로 확장해야 하기 때문에
         # 1단계: Provider 메타데이터 가져오기
         metadata_provider = QgsProviderRegistry.instance().providerMetadata("PandapowerProvider")
-
         # 2단계: URI를 딕셔너리로 분해하기
         uri_parts = metadata_provider.decodeUri(uri)
-        debug_print(f"🔍 URI 분해 결과: {uri_parts}")
-
         # 3단계: 파일 경로 추출
         file_path = uri_parts.get('path')
         if not file_path:
-            debug_print("❌ URI에서 파일 경로를 찾을 수 없습니다.")
-            debug_print(f"❌ URI 구성 요소: {uri_parts}")
+            print("❌ URI에서 파일 경로를 찾을 수 없습니다.")
+            print(f"❌ URI 구성 요소: {uri_parts}")
             return
 
-        debug_print(f"✅ 파일 경로 추출 성공: {file_path}")
-        debug_print(f"📁 파일 경로: {file_path}")
-
-        # 🔍 현재 NetworkContainer에 등록된 모든 URI 확인
+        # 🔍 현재 NetworkContainer에 등록된 모든 URI 확인하고 같은 파일에 속한 uri를 추출
         all_uris = list(NetworkContainer._networks.keys())
         related_uris = []
-
         for existing_uri in all_uris:
-            # 같은 파일에서 온 URI인지 확인
             if f'path="{file_path}"' in existing_uri:
                 related_uris.append(existing_uri)
-                debug_print(f"🎯 관련 URI 발견: {existing_uri}")
         if not related_uris:
-            debug_print("⚠️ 관련된 URI를 찾을 수 없습니다.")
+            print("⚠️ 관련된 URI를 찾을 수 없습니다.")
             return
 
-        # 🔄 같은 파일의 모든 URI를 업데이트
-        print(f"📦 {len(related_uris)}개의 관련 URI 업데이트 시작...")
+        # 🔄 같은 파일의 모든 URI를 업데이트하고 network container에 알리기
+        print(f"📦 {len(related_uris)}개의 관련 URI 업데이트 시작...\n")
 
         for related_uri in related_uris:
             # 각 URI의 기존 데이터 가져오기
@@ -707,191 +668,278 @@ def post_process_results(parent, uri, network_data, parameters):
 
                 # NetworkContainer에 업데이트 (알림 발송됨)
                 NetworkContainer.register_network(related_uri, updated_data)
-                debug_print(f"✅ URI 업데이트 완료: {related_uri}")
+                print(f"✅ URI 업데이트 완료: {related_uri}\n")
             else:
-                debug_print(f"⚠️ 기존 데이터를 찾을 수 없음: {related_uri}")
+                print(f"⚠️ 기존 데이터를 찾을 수 없음: {related_uri}")
+        print("🎉🎉🎉🎉🎉🎉 모든 관련 레이어 업데이트 완료!🎉🎉🎉🎉🎉\n\n")
 
-        debug_print("🎉 모든 관련 레이어 업데이트 완료!")
-
-        # 2. 레이어 색상 업데이트 (사용자가 선택한 경우)
-        if parameters.get('update_renderer', False):
-            print("#"*50)
-            print("🎨 post_process_results 단계 2. 레이어 색상 업데이트 시작...")
-            debug_print("🔬 [DETAIL-B] 렌더러 업데이트 테스트...")
-            # 모든 관련 URI에 대해 색상 업데이트
-            for related_uri in related_uris:
-                debug_print(f"   🚨 {related_uri}에 대해 update_layer_colors_for_uri 호출 중...")
-                update_layer_colors_for_uri(related_uri)    # v1+v2
-                #safe_renderer_update_test(uri, debug_print)    # detailed_post_process_analysis method
-                debug_print("   ✅ 렌더러 업데이트 테스트 성공!")
-            print("✅ 전체 레이어 색상 업데이트 완료") # 왜 이건 실행안되지?
-
-            # 3. 결과 표시 (필요시)
-            if parameters.get('show_results', False):
-                print("📊 상세 결과 표시...")
-                # 이 부분은 추후 구현 가능
-                pass
-
-            print("🎉 결과 후처리 완료!")
-
-        # 🔬 단계 C: 기타 후처리 작업들
-        debug_print("🔬 [DETAIL-C] 기타 후처리 작업 테스트...")
-        try:
-            debug_print("   - 메모리 정리 테스트...")
-            # 간단한 메모리 정리 작업
-            import gc
-            gc.collect()
-            debug_print("   ✅ 메모리 정리 완료")
-
-            debug_print("   - 상태 확인 테스트...")
-            # NetworkContainer 상태 확인
-            container_count = len(NetworkContainer._networks)
-            debug_print(f"   ✅ NetworkContainer에 {container_count}개 URI 등록됨")
-
-        except Exception as misc_error:
-            debug_print(f"   ❌ 기타 후처리 실패: {str(misc_error)}")
-            # 이것도 전체를 중단하지 않음
-
-        debug_print("🎉 [DETAIL-완료] 세밀한 후처리 분석 완료!")
-        debug_print(f"📁 세부 디버깅 파일 저장됨: {debug_file_path}")
-
-    except Exception as e:
-        debug_print(f"❌ [DETAIL-오류] 세밀한 후처리 분석 중 오류: {str(e)}")
-        import traceback
-        debug_print(f"상세 오류:\n{traceback.format_exc()}")
-        debug_print(f"📁 오류 디버깅 파일 저장됨: {debug_file_path}")
-        raise  # 오류를 상위로 전파
-
-
-def update_layer_colors_for_uri(uri):
-    """
-    안전한 렌더러 설정 - 단계별 검증으로 문제점 찾기
-    """
-    try:
-        print("현재 update_layer_colors_for_uri이에요!")
-        print("🔍 1단계: 렌더러 import 시작...")
-        from .renderer_utils import create_bus_renderer, create_line_renderer
-        print("✅ 1단계 완료: import 성공")
-
-        print("🔍 2단계: 레이어 찾기 시작...")
+        # qgis에 열려있는 레이어 중 uri와 매치되는 레이어 찾기
         layers = QgsProject.instance().mapLayers()
         target_layers = []
-        renderer = None
+        current_renderers = []
 
         for layer_id, layer in layers.items():
             if (hasattr(layer, 'dataProvider') and
-                    layer.dataProvider().name() == "PandapowerProvider" and
-                    layer.source() == uri):
-                target_layers.append(layer)
-                renderer = layer.renderer()
-                print(f"✅ 타겟 레이어 발견: {layer.name()}")
-                print(f"✅ 렌더러 발견: {renderer}")
+                    layer.dataProvider().name() == "PandapowerProvider"):
+                layer_source = layer.source()
+                if layer_source in related_uris:
+                    target_layers.append(layer)
+                    current_renderers.append(layer.renderer())
+                    print(f"✅ 타겟 레이어 발견: {layer.name()}")
+                    print(f"✅ 타겟 레이어 렌더러 발견: {layer.renderer()}")
 
-        if not target_layers:
-            print("⚠️ 업데이트할 레이어를 찾을 수 없습니다.")
-            return True  # 오류가 아니므로 True 반환
-        if not renderer:
-            print("⚠️ 기존 렌더러를 발견할 수 없습니다.")
+        # 그냥 일단 ㅅㅂ 같을테니까 같다고 치자
+        if isinstance(current_renderers[0], QgsGraduatedSymbolRenderer):
+            for i, layer in enumerate(target_layers):
+                print(f"🔍 3-{i + 1}단계: {layer.name()} 처리 중...")
+                layer.triggerRepaint()
 
-        print(f"🔍 3단계: {len(target_layers)}개 레이어 처리 시작...")
-
-        for i, layer in enumerate(target_layers):
-            print(f"🔍 3-{i + 1}단계: {layer.name()} 처리 중...")
-
-            # 3-1. 레이어 유효성 검사
-            if not layer.isValid():
-                print(f"❌ 레이어가 유효하지 않음: {layer.name()}")
-                continue
-
-            # 3-2. 데이터 프로바이더 검사
-            provider = layer.dataProvider()
-            if not provider or not provider.isValid():
-                print(f"❌ 프로바이더가 유효하지 않음: {layer.name()}")
-                continue
-
-            # 3-3. 레이어 타입 확인
-            layer_name_lower = layer.name().lower()
-            #renderer = None
-            field_names = [field.name() for field in layer.fields()]
-            print(f"🔍 레이어 {layer.name()} 필드들: {field_names}")
-
-            # print(f"🔍 3-{i + 1}-1: 렌더러 생성 중...")
-            # if 'bus' in layer_name_lower or 'junction' in layer_name_lower:
-            #     if "vm_pu" in field_names:
-            #         renderer = create_bus_renderer(render=True)
-            #         print(f"✅ 새로운 그라데이션 버스 렌더러 생성 for {layer.name()}")
-            #     else:
-            #         renderer = create_bus_renderer(render=False)[0]  # return값 다 안 쓸거면 왜 두 개 만든겨?
-            #         print(f"✅ 새로운 단순 버스 렌더러 생성 for {layer.name()}")
-            #     print(f"✅ 버스 렌더러 생성: {type(renderer)}")
-            # elif 'line' in layer_name_lower or 'pipe' in layer_name_lower:
-            #     if "loading_percent" in field_names:
-            #         #renderer = create_line_renderer(render=True)
-            #         print(f"⚠️ 라인 렌더러 생성 시도 중... (크래시 위험 구간)")
-            #         try:
-            #             renderer = create_line_renderer(render=True)
-            #             print(f"✅ 새로운 그라데이션 라인 렌더러 생성 for {layer.name()}")
-            #         except Exception as line_renderer_error:
-            #             print(f"❌ 그라데이션 라인 렌더러 생성 실패: {line_renderer_error}")
-            #             print("⚠️ 단순 렌더러로 대체...")
-            #             renderer, _ = create_line_renderer(render=False)
-            #             print(f"✅ 단순 라인 렌더러로 대체 완료 for {layer.name()}")
-            #     else:
-            #         renderer = create_line_renderer(render=False)[0]
-            #         print("✅ 단순 렌더러 for line 생성")
-            #     print(f"✅ 라인 렌더러 생성: {type(renderer)}")
-            # else:
-            #     print(f"⚠️ 알 수 없는 레이어 타입: {layer.name()}")
-            #     continue
-
-            # 3-4. 렌더러 유효성 검사
-            print(f"   - 메모리 주소: {id(renderer)}🔍🔍🔍🔍🔍🔍🔍🔍")  # 각 레이어마다 다른 주소여야 함!
-            if not renderer:
-                print(f"❌ 렌더러 생성 실패: {layer.name()}")
-                continue
-
-            print(f"🔍 3-{i + 1}-2: 렌더러 설정 시도 중...")
-
-            # # 🚨 핵심: 안전한 렌더러 설정
-            try:
-            #     # 렌더러 설정 전 추가 검사
-            #     if hasattr(renderer, 'classAttribute') and hasattr(layer, 'fields'):
-            #         #attr_name = renderer.classAttribute()
-            #
-            #         if attr_name:  # 속성 기반 렌더러인 경우
-            #             field_names = [field.name() for field in layer.fields()]
-            #             if attr_name not in field_names:
-            #                 print(f"⚠️ 필드 {attr_name}이 레이어에 없음. 단순 렌더러로 변경")
-            #                 # 단순 렌더러로 대체
-            #                 if 'bus' in layer_name_lower or 'junction' in layer_name_lower:
-            #                     renderer = create_bus_renderer(render=False)[0]
-            #                 else:
-            #                     renderer = create_line_renderer(render=False)[0]
-
-                # 📍 여기가 문제가 되는 부분입니다!
-                print(f"🚨 CRITICAL: setRenderer 호출 직전 - {layer.name()}")
-                layer.setRenderer(renderer)
-                print(f"✅ setRenderer 성공 - {layer.name()}")
-
-                # 레이어 새로고침
+        # 기존에 single renderer였다면 새로운 graduated 렌더러 적용
+        elif isinstance(current_renderers[0], QgsSingleSymbolRenderer):
+            # graduated 렌더러 새로 설정
+            bus_renderer, line_renderer = create_power_renderer()
+            metadata_provider = QgsProviderRegistry.instance().providerMetadata("PandapowerProvider")
+            for i, layer in enumerate(target_layers):
+                print(f"🔍 3-{i + 1}단계: {layer.name()} 처리 중...")
+                if layer.dataProvider().network_type == 'bus':
+                    layer.setRenderer(bus_renderer)
+                elif layer.dataProvider().network_type == 'line':
+                    layer.setRenderer(line_renderer)
+                elif layer.dataProvider().network_type == 'junction':
+                    pass
                 layer.triggerRepaint()
                 print(f"✅ 3-{i + 1} 완료: {layer.name()} 업데이트 성공")
+                print("   ✅ 렌더러 업데이트 테스트 성공!")
 
-            except Exception as renderer_error:
-                print(f"❌ 렌더러 설정 실패: {layer.name()}")
-                print(f"❌ 오류 내용: {str(renderer_error)}")
-                import traceback
-                traceback.print_exc()
-                continue
+        print("✅ 전체 레이어 색상 업데이트 완료")
 
-        print("✅ 모든 레이어 처리 완료")
-        return True
+        # 3. 결과 표시 (필요시)
+        if parameters.get('show_results', False):
+            print("📊 상세 결과 표시...")
+            # 이 부분은 추후 구현 가능
+            pass
+        print("🎉 결과 후처리 완료!")
+
+        # 🔬 단계 C: 기타 후처리 작업들
+        try:
+            # 간단한 메모리 정리 작업
+            import gc
+            gc.collect()
+            container_count = len(NetworkContainer._networks)
+            print(f"   ✅ NetworkContainer에 {container_count}개 URI 등록됨")
+        except Exception as misc_error:
+            print(f"   ❌ 기타 후처리 실패: {str(misc_error)}")
+            # 이것도 전체를 중단하지 않음
 
     except Exception as e:
-        print(f"❌ update_layer_colors_for_uri 전체 오류: {str(e)}")
+        print(f"❌ [DETAIL-오류] 세밀한 후처리 분석 중 오류: {str(e)}")
         import traceback
-        traceback.print_exc()
-        return False
+        print(f"상세 오류:\n{traceback.format_exc()}")
+        raise  # 오류를 상위로 전파
+
+
+
+# def post_process_results(parent, uri, network_data, parameters):
+#     """
+#     계산 결과를 후처리합니다.
+#     이 함수는 "마무리 작업" 역할을 합니다:
+#     - 계산 결과를 네트워크 컨테이너에 업데이트
+#     - 필요시 레이어 색상 업데이트
+#     - 결과 표시 옵션 처리
+#     Args:
+#         parent: 부모 객체
+#         uri (str): 네트워크 URI
+#         network_data (dict): 네트워크 데이터
+#         parameters (dict): 사용자 설정 매개변수
+#     """
+#     try:
+#         print("\n")
+#         print("=" * 50)
+#         print(f"🚚 여기는 post_process_results!")
+#
+#         # 1단계: Provider 메타데이터 가져오기
+#         metadata_provider = QgsProviderRegistry.instance().providerMetadata("PandapowerProvider")
+#         # 2단계: URI를 딕셔너리로 분해하기
+#         uri_parts = metadata_provider.decodeUri(uri)
+#         # 3단계: 파일 경로 추출
+#         file_path = uri_parts.get('path')
+#         if not file_path:
+#             print("❌ URI에서 파일 경로를 찾을 수 없습니다.")
+#             print(f"❌ URI 구성 요소: {uri_parts}")
+#             return
+#
+#         # 🔍 현재 NetworkContainer에 등록된 모든 URI 확인
+#         all_uris = list(NetworkContainer._networks.keys())
+#         related_uris = []
+#         for existing_uri in all_uris:
+#             # 같은 파일에서 온 URI인지 확인
+#             if f'path="{file_path}"' in existing_uri:
+#                 related_uris.append(existing_uri)
+#         if not related_uris:
+#             print("⚠️ 관련된 URI를 찾을 수 없습니다.")
+#             return
+#
+#         # 🔄 같은 파일의 모든 URI를 업데이트
+#         print(f"📦 {len(related_uris)}개의 관련 URI 업데이트 시작...")
+#
+#         for related_uri in related_uris:
+#             # 각 URI의 기존 데이터 가져오기
+#             existing_data = NetworkContainer.get_network(related_uri)
+#             if existing_data:
+#                 # 네트워크 객체만 업데이트 (다른 정보는 그대로 유지)
+#                 updated_data = existing_data.copy()
+#                 updated_data['net'] = network_data['net']  # 계산 결과가 포함된 최신 네트워크
+#
+#                 # NetworkContainer에 업데이트 (알림 발송됨)
+#                 NetworkContainer.register_network(related_uri, updated_data)
+#                 print(f"✅ URI 업데이트 완료: {related_uri}")
+#             else:
+#                 print(f"⚠️ 기존 데이터를 찾을 수 없음: {related_uri}")
+#         print("🎉 모든 관련 레이어 업데이트 완료!")
+#
+#
+#         # 2. 레이어 색상 업데이트 (사용자가 선택한 경우)
+#         if parameters.get('update_renderer', False):
+#             print("#"*50)
+#             print("🎨 post_process_results 단계 2. 레이어 색상 업데이트 시작...")
+#
+#             # graduated 렌더러 새로 설정
+#             bus_renderer, line_renderer = create_power_renderer()
+#             metadata_provider = QgsProviderRegistry.instance().providerMetadata("PandapowerProvider")
+#
+#             # 모든 관련 URI에 대해 색상 업데이트
+#             for related_uri in related_uris:
+#                 print(f"   🚨 {related_uri}에 대해 update_layer_colors_for_uri 호출 중...")
+#                 #update_layer_colors_for_uri(related_uri)
+#                 uri_parts = metadata_provider.decodeUri(related_uri)
+#                 uri_network_type = uri_parts['network_type']
+#                 if uri_network_type == 'bus':
+#                     update_layer_colors_for_uri(related_uri, bus_renderer)
+#                 elif uri_network_type == 'line':
+#                     update_layer_colors_for_uri(related_uri, line_renderer)
+#                 elif uri_network_type == 'junction':
+#                     pass
+#                 print("   ✅ 렌더러 업데이트 테스트 성공!")
+#             print("✅ 전체 레이어 색상 업데이트 완료")
+#
+#             # 3. 결과 표시 (필요시)
+#             if parameters.get('show_results', False):
+#                 print("📊 상세 결과 표시...")
+#                 # 이 부분은 추후 구현 가능
+#                 pass
+#             print("🎉 결과 후처리 완료!")
+#
+#         # 🔬 단계 C: 기타 후처리 작업들
+#         try:
+#             # 간단한 메모리 정리 작업
+#             import gc
+#             gc.collect()
+#             container_count = len(NetworkContainer._networks)
+#             print(f"   ✅ NetworkContainer에 {container_count}개 URI 등록됨")
+#         except Exception as misc_error:
+#             print(f"   ❌ 기타 후처리 실패: {str(misc_error)}")
+#             # 이것도 전체를 중단하지 않음
+#
+#     except Exception as e:
+#         print(f"❌ [DETAIL-오류] 세밀한 후처리 분석 중 오류: {str(e)}")
+#         import traceback
+#         print(f"상세 오류:\n{traceback.format_exc()}")
+#         raise  # 오류를 상위로 전파
+#
+#
+# def update_layer_colors_for_uri(uri, renderer):
+#     """
+#     안전한 렌더러 설정 - 단계별 검증으로 문제점 찾기
+#     """
+#     try:
+#         print("현재 update_layer_colors_for_uri이에요!")
+#         #from .renderer_utils import create_power_renderer, create_pipe_renderer
+#
+#         print("🔍 2단계: 레이어 찾기 시작...")
+#         layers = QgsProject.instance().mapLayers()
+#         target_layers = []
+#         #renderer = None
+#         current_renderer = None
+#
+#         for layer_id, layer in layers.items():
+#             if (hasattr(layer, 'dataProvider') and
+#                     layer.dataProvider().name() == "PandapowerProvider" and
+#                     layer.source() == uri):
+#                 target_layers.append(layer)
+#                 #renderer = layer.renderer()
+#                 print(f"✅ 타겟 레이어 발견: {layer.name()}")
+#
+#         # current_renderer = target_layers[0].renderer()
+#         # print("🔍🔍🔍🔍🔍🔍🔍🔍🔍\ntarget_layers: ", target_layers)
+#         # print("target_layers[0]: ", target_layers[0])
+#         # print("uri: ", uri, "\ncurrent_renderer: ", current_renderer)
+#
+#         if not target_layers:
+#             print("⚠️ 업데이트할 레이어를 찾을 수 없습니다.")
+#             return True  # 오류가 아니므로 True 반환
+#         # if not current_renderer:
+#         #     print("⚠️ 기존 렌더러를 발견할 수 없습니다.")
+#
+#         print(f"🔍 3단계: {len(target_layers)}개 레이어 처리 시작...")
+#
+#         for i, layer in enumerate(target_layers):
+#             print(f"🔍 3-{i + 1}단계: {layer.name()} 처리 중...")
+#
+#             # 3-1. 레이어 유효성 검사
+#             if not layer.isValid():
+#                 print(f"❌ 레이어가 유효하지 않음: {layer.name()}")
+#                 continue
+#
+#             # 3-2. 데이터 프로바이더 검사
+#             provider = layer.dataProvider()
+#             if not provider or not provider.isValid():
+#                 print(f"❌ 프로바이더가 유효하지 않음: {layer.name()}")
+#                 continue
+#
+#             # 3-3. 레이어 타입 확인
+#             layer_name_lower = layer.name().lower()
+#             field_names = [field.name() for field in layer.fields()]
+#             print(f"🔍 레이어 {layer.name()} 필드들: {field_names}")
+#
+#             # 3-4. 렌더러 유효성 검사
+#             current_renderer = layer.renderer()
+#             print(f"   - 렌더러의 메모리 주소: {id(current_renderer)}🔍🔍🔍🔍🔍🔍🔍🔍")
+#             if not current_renderer:
+#                 print(f"❌ 렌더러 생성 실패: {layer.name()}")
+#                 continue
+#
+#             print(f"🔍 3-{i + 1}-2: 렌더러 설정 시도 중...")
+#
+#             # # 🚨 핵심: 안전한 렌더러 설정
+#             try:
+#                 # 기존에 graduated renderer였다면 기존 렌더러 다시 사용
+#                 if isinstance(current_renderer, QgsGraduatedSymbolRenderer):
+#                     #layer.setRenderer(current_renderer)
+#                     print("repaint만 실행")
+#                 # 기존에 single renderer였다면 새로운 graduated 렌더러 적용
+#                 elif isinstance(current_renderer, QgsSingleSymbolRenderer):
+#                     layer.setRenderer(renderer)
+#                     print(f"✅ setRenderer 성공 - {layer.name()}")
+#
+#                 # 레이어 새로고침
+#                 layer.triggerRepaint()
+#                 print(f"✅ 3-{i + 1} 완료: {layer.name()} 업데이트 성공")
+#
+#             except Exception as renderer_error:
+#                 print(f"❌ 렌더러 설정 실패: {layer.name()}")
+#                 print(f"❌ 오류 내용: {str(renderer_error)}")
+#                 import traceback
+#                 traceback.print_exc()
+#                 continue
+#
+#         print("✅ 모든 레이어 처리 완료")
+#         return True
+#
+#     except Exception as e:
+#         print(f"❌ update_layer_colors_for_uri 전체 오류: {str(e)}")
+#         import traceback
+#         traceback.print_exc()
+#         return False
 
 
 def execute_pipes_calculation(net, function_name, kwargs_dict):
