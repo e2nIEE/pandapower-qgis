@@ -24,29 +24,24 @@ class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
         self._index = 0
         self._is_valid = False
 
-        # 좌표계 변환 설정 - 판다파워에는 필요없을듯
+        # Coordinate transformation settings - might not be needed for pandapower
         self._transform = QgsCoordinateTransform()
         if (request.destinationCrs().isValid() and
-            request.destinationCrs() != source.get_provider().crs()):
+                request.destinationCrs() != source.get_provider().crs()):
             self._transform = QgsCoordinateTransform(
-                self._provider().crs(),         # 원본 좌표계
-                request.destinationCrs(),       # 목적지 좌표계
-                request.transformContext()      # 변환 컨텍스트
+                self._provider().crs(),  # Source coordinate system
+                request.destinationCrs(),  # Destination coordinate system
+                request.transformContext()  # Transformation context
             )
 
         # Prepare geometry data
         # self.df_geodata = getattr(self._provider.net, f'{self._provider.network_type}_geodata')
         self.df_geodata = getattr(self._provider.net, f'{self._provider.network_type}').geo
-        #self.df_geodata2 = self._provider.net.bus.geo
-        #print("current network type: ", self._provider.network_type, "\n")
-        #print(".geo head: ", self.df_geodata.head, "\n")
-        #print("net.bus.geo head", self.df_geodata2.head, "\n")
 
         # Prepare main dataframe
         self.df = self._provider.df
-        #print("self.df .head", self.df, "\n\n\n")
 
-        # 유효성 검사는 추후 별도의 메서드나 플래그로 처리
+        # Handle validation later via a separate method or flag
         self._is_valid = (self.df_geodata is not None and self.df is not None)
 
         if self._is_valid:
@@ -80,17 +75,11 @@ class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
         # Geometry settings
         has_valid_geometry = False
         if idx in self.df_geodata.index:
-            #print("network type: ", self._provider.network_type, "\n")
-            #raw_geo = self.df_geodata.loc[idx]
-            #print(f"Raw data for idx {idx}: {raw_geo}\n")
             row_geo = json.loads(self.df_geodata.loc[idx])
-            #print(f"Parsed data structure: {type(row_geo)}, content: {row_geo}\n")
             try:
                 if self._provider.network_type in ['bus', 'junction']:
                     if 'coordinates' in row_geo and isinstance(row_geo['coordinates'], list) and len(row_geo['coordinates']) >= 2:
                         # Create point geometry
-                        #x = row_geo.get('x', 0)
-                        #y = row_geo.get('y', 0)
                         x = row_geo['coordinates'][0]
                         y = row_geo['coordinates'][1]
                         geometry = QgsGeometry.fromPointXY(QgsPointXY(x, y))
@@ -127,23 +116,23 @@ class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
                     else:
                         print(f"Warning: No coordinates found for {self._provider.network_type} index {idx}")
 
-                    # 좌표계 변환 적용
+                    # Apply CRS transformation
                     if has_valid_geometry and not self._transform.isShortCircuited():
                         self.geometryToDestinationCrs(feature, self._transform)
 
                     # Spatial filter to select features from the layer
-                    # 라인 레이어에 대한 공간 필터 적용
+                    # Apply a spatial filter to the line layer.
                     filter_rect = self.filterRectToSourceCrs(self._transform)
                     if not filter_rect.isNull():
-                        # 공간 연산을 위해 filter_rect를 qgsgeometry 객체로 변환
+                        # Convert filter_rect to QgsGeometry object for spatial operations
                         filter_geom = QgsGeometry.fromRect(filter_rect)
-                        # 교차 여부 확인
+                        # Check intersection
                         if not feature.geometry().intersects(filter_geom):
-                            # 교차하지 않으면 거리 기반 근접성 확인
+                            # If no intersection, check distance-based proximity
                             distance = feature.geometry().distance(filter_geom)
-                            # 허용 오차 설정 (지도 스케일에 따라 조정 필요)
-                            tolerance = 0.00001  # 약 1m 정도의 허용 오차
-                            # 오차 범위를 넘으면 건너뜀
+                            # Set tolerance (needs adjustment based on map scale)
+                            tolerance = 0.00001  # Tolerance of approximately 1m
+                            # Skip if beyond tolerance range
                             if distance > tolerance:
                                 self._index += 1
                                 return self.fetchFeature(feature)

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-렌더러 유틸리티 - 기존 ppqgis_import 방식을 공통으로 사용
+Renderer utility: use the standard ppqgis_import method.
 """
 
 from qgis.PyQt.QtGui import QColor
@@ -8,24 +8,16 @@ from qgis.core import QgsProject, QgsVectorLayer, QgsApplication, \
     QgsGraduatedSymbolRenderer, QgsSingleSymbolRenderer, QgsRendererRange, QgsClassificationRange, \
     QgsMarkerSymbol, QgsLineSymbol, QgsGradientColorRamp, QgsProviderRegistry, QgsProviderMetadata
 
-# # 기존 ppqgis_import.py에서 사용하던 색상들
 BUS_LOW_COLOR = "#ccff00"  # lime
 BUS_HIGH_COLOR = "#00cc44"  # green
 LINE_LOW_COLOR = "#0000ff"  # blue
 LINE_HIGH_COLOR = "#ff0022"  # red
 
-# BUS_LOW_COLOR = QColor("#ccff00")  # lime
-# BUS_HIGH_COLOR = QColor("#00cc44")  # green
-# LINE_LOW_COLOR = QColor("#0000ff")  # blue
-# LINE_HIGH_COLOR = QColor("#ff0022")  # red
-
 
 def create_power_renderer():
     """
-    Args:
-        render (bool): True면 그라데이션 렌더링, False면 단일 색상
     Returns:
-        QgsRenderer: 생성된 렌더러 (단일 색상일 때는 color_ramp도 함께)
+        QgsRenderer: Created renderer (includes color_ramp when single color)
     """
     bus_color_ramp = QgsGradientColorRamp(QColor(BUS_LOW_COLOR), QColor(BUS_HIGH_COLOR))
     line_color_ramp = QgsGradientColorRamp(QColor(LINE_LOW_COLOR), QColor(LINE_HIGH_COLOR))

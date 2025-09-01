@@ -87,21 +87,12 @@ def power_network(parent, file) -> None:
         render = parent.dlg_import.gradRender.isChecked()
 
         # if res column is cleared, render off
-        # 똑똑한 판단: 계산 결과가 없으면 자동으로 간단한 방식 사용
         has_result_data = (hasattr(net, 'res_bus') and
                            net.res_bus is not None and
                            not net.res_bus.empty and
                            len(net.res_bus) > 0)
         if not has_result_data:
-            render = False  # 강제로 간단한 색칠 방식 사용
-            print("⚠️ 계산 결과가 없어서 간단한 색상 방식을 사용합니다")
-
-        ''' 일단 위에 이거 지우고, 원본에서 render 체크 안 되어있으면 무슨 일이 일어나는지 알아봐야겠네.    
-        다이얼로그에 체크란이 있나보네.
-        만약에 여기서 체크가 안 되어있다면... runpp 쪽에서 렌더러 만들 수 있는 능력이 있어야 하는 게 아닐까?
-        일단 이거 살려놓고, import 할 때 single, runpp 할 때 graduate로 바꾸기로 하자.
-        그를 위해 renderer_utils를 바꿔야 할 것 같은데...
-        '''
+            render = False  # Use a simple coloring method
 
         try:
             crs = int(parent.dlg_import.projectionSelect.crs().authid().split(':')[1])
@@ -199,8 +190,11 @@ def power_network(parent, file) -> None:
                 line_symbol.setWidth(.6)
                 line_renderer = QgsSingleSymbolRenderer(line_symbol)
                 # set color of symbol based on vn_kv
-                bus_symbol.setColor(bus_color_ramp.color(map_to_range(vn_kv, min_kv, max_kv)))
-                line_symbol.setColor(line_color_ramp.color(map_to_range(vn_kv, min_kv, max_kv)))
+                #bus_symbol.setColor(bus_color_ramp.color(map_to_range(vn_kv, min_kv, max_kv)))
+                #line_symbol.setColor(line_color_ramp.color(map_to_range(vn_kv, min_kv, max_kv)))
+                # If no result, use gray to display network
+                bus_symbol.setColor(QColor("#808080"))
+                line_symbol.setColor(QColor("#808080"))
 
             bus = {
                 'object': buses,
@@ -233,69 +227,35 @@ def power_network(parent, file) -> None:
                     layer = QgsVectorLayer(geojson.dumps(gj), type_layer_name, "ogr")   # check, und dump to geojson auch 기존은 gj라는 데이터소스를 사용하여 레이어를 만들었으나 나는 레이어를 만들고 데이터를 추가하는 방식을 사용하였음 여기에서 차이가 발생하므로 
                     '''
 
-                provider_list = QgsProviderRegistry.instance().providerList()
-                print("Registered providers:", provider_list, "before ---------------------------")
-
                 uri_parts = {
-                    #"net": net,
-                    #"type_layer_name": type_layer_name,
-                    #"path": r"C:\Users\slee\Documents\pp_old\mv_oberrhein_wgs - Kopie.json", #str(file_path),
                     "path": file,
                     "network_type": obj["suffix"],
                     "voltage_level": str(vn_kv),
                     "geometry": "Point" if obj["suffix"] in ['bus', 'junction'] else "LineString",
                     "epsg": str(current_crs),
-                    #"current_crs": current_crs
                 }
                 provider_metadata = QgsProviderRegistry.instance().providerMetadata("PandapowerProvider")
                 uri = provider_metadata.encodeUri(uri_parts)
 
-
                 # Register network data to container
                 network_data = {
                     'net': net,
-                    #'net': obj,
                     'vn_kv': vn_kv,
                     'type_layer_name': type_layer_name,
                     'network_type': obj['suffix'],
                     'current_crs': current_crs
                 }
                 NetworkContainer.register_network(uri, network_data)
-                print("Network registered.")
-                #print(network_data['net'])
-
 
                 layer = QgsVectorLayer(uri, type_layer_name, "PandapowerProvider")
-
-                print("\nQgsvectorlayer created.")
-                #print("Capabilities of layer: ", layer.dataProvider().capabilities()) #왜 안되지???
-                provider_list = QgsProviderRegistry.instance().providerList()
-                print("Registered providers: ", provider_list, "after ------------\n")
 
                 layer.setRenderer(obj['renderer'])
                 # add layer to group
                 QgsProject.instance().addMapLayer(layer, False)
                 group.addLayer(layer)
 
-                # Map Tip 설정 추가
+                # Add map tip setting
                 MapTipUtils.configure_map_tips(layer, vn_kv, obj["suffix"])
-
-                print(f"\n{type_layer_name} layer is editable? {layer.isEditable()} @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
-
-                # Debugging: Check if layer is added to the project
-                if QgsProject.instance().mapLayersByName(type_layer_name):
-                    print(f"Layer '{type_layer_name}' successfully added to the project.")
-                else:
-                    print(f"Failed to add layer '{type_layer_name}' to the project.")
-                # 현재 QGIS 프로젝트의 CRS 가져오기
-                project_crs = QgsProject.instance().crs()
-                # CRS의 EPSG 코드 출력
-                print(f"Current project CRS: {project_crs.authid()}")
-                # CRS의 이름 출력
-                print(f"CRS Name: {project_crs.description()}")
-                # CRS의 WKT(Well-Known Text) 표현 출력
-                print(f"CRS WKT: {project_crs.toWkt()}")
-                print(f"Current layer crs: {current_crs}\n")
 
             if buses or lines:
                 # Move layers above TileLayer
@@ -307,20 +267,23 @@ def power_network(parent, file) -> None:
                 root.setCustomLayerOrder(order)
 
             try:
-                # Map Tips 전역 설정 활성화
+                # Enable the global Map Tips setting
                 from qgis.PyQt.QtCore import QSettings
                 QSettings().setValue("qgis/enableMapTips", True)
 
-                # 더 안전하게, 액션 트리거 사용 시도
+                # For safety, try using an action trigger
                 try:
                     if not parent.iface.actionMapTips().isChecked():
                         parent.iface.actionMapTips().trigger()
                 except:
-                    pass  # 액션이 없거나 접근할 수 없는 경우 무시
-
-                print("Map Tips is successfully activated.")
+                    pass  # Ignore if the action is missing or inaccessible
             except Exception as e:
-                print(f"An error occurred while activating Map Tips: {e}")
+                parent.iface.messageBar().pushMessage(
+                    "Map Tips Error",
+                    f"An error occurred while enabling Map Tips: {str(e)}",
+                    level=Qgis.Critical,
+                    duration=5
+                )
 
 def pipes_network(parent, file):
     # get crs of QGIS project
@@ -330,15 +293,8 @@ def pipes_network(parent, file):
     import geo # in a future version this should be replaced by pandapower.plotting.geo as geo
     import geojson
 
-    print("=" * 50)
-    print("ppqgis_import.py, pipes_network method")
-
-    # 디버그: 파일 읽기 전
-    print(f"[DEBUG] Loading pandapipes file: {file}")
-    print(f"[DEBUG] File exists: {os.path.exists(file)}")
-
     try:
-        # 디버그: 파일 내용 미리 확인
+        # Debug: preview file contents.
         with open(file, 'r') as f:
             content = f.read()
             print(f"[DEBUG] File content preview (first 500 chars):")
@@ -347,7 +303,7 @@ def pipes_network(parent, file):
     except Exception as e:
         print(f"[DEBUG] Error reading file: {e}")
 
-    # 실제 로딩 시도
+    # Attempt actual loading
     try:
         net = pp.from_json(file)
         print(f"[DEBUG] Successfully loaded pandapipes network")
@@ -357,11 +313,8 @@ def pipes_network(parent, file):
         print(f"[DEBUG] Error loading pandapipes network: {e}")
         import traceback
         traceback.print_exc()
-        #return  # 에러 발생 시 함수 종료
-        raise   # 에러를 상위로 전파
-
-
-    print("=" * 50)
+        #return
+        raise
 
     net = pp.from_json(file)
 
@@ -517,7 +470,7 @@ def pipes_network(parent, file):
                 uri_parts = {
                     "path": file,
                     "network_type": obj["suffix"],
-                    "pressure_level": str(pn_bar),  # ← 파이프의 경우 압력 레벨 추가!
+                    "pressure_level": str(pn_bar),
                     "geometry": "Point" if obj["suffix"] in ['bus', 'junction'] else "LineString",
                     "epsg": str(current_crs),
                 }
@@ -528,47 +481,22 @@ def pipes_network(parent, file):
                 # Register network data to container
                 network_data = {
                     'net': net,
-                    # 'net': obj,
                     'pn_bar': pn_bar,
                     'type_layer_name': type_layer_name,
                     'network_type': obj['suffix'],
                     'current_crs': current_crs
                 }
                 NetworkContainer.register_network(uri, network_data)
-                print("Network registered.")
-                print(network_data['net'])
 
                 layer = QgsVectorLayer(uri, type_layer_name, "PandapowerProvider")
-
-                print("\nQgsvectorlayer created.")
-                provider_list = QgsProviderRegistry.instance().providerList()
-                print("Registered providers: ", provider_list, "after ------------\n")
-
 
                 layer.setRenderer(obj['renderer'])
                 # add layer to group
                 QgsProject.instance().addMapLayer(layer, False)
                 group.addLayer(layer)
 
-
-                # Map Tip 설정 추가
+                # Add map tip setting
                 MapTipUtils.configure_map_tips(layer, pn_bar, obj["suffix"])
-
-                # Debugging: Check if layer is added to the project
-                if QgsProject.instance().mapLayersByName(type_layer_name):
-                    print(f"Layer '{type_layer_name}' successfully added to the project.")
-                else:
-                    print(f"Failed to add layer '{type_layer_name}' to the project.")
-                # 현재 QGIS 프로젝트의 CRS 가져오기
-                project_crs = QgsProject.instance().crs()
-                # CRS의 EPSG 코드 출력
-                print(f"Current project CRS: {project_crs.authid()}")
-                # CRS의 이름 출력
-                print(f"CRS Name: {project_crs.description()}")
-                # CRS의 WKT(Well-Known Text) 표현 출력
-                print(f"CRS WKT: {project_crs.toWkt()}")
-                print(f"Current layer crs: {current_crs}\n")
-
 
             if junctions or pipes:
                 # Move layers above TileLayer
@@ -580,17 +508,18 @@ def pipes_network(parent, file):
                 root.setCustomLayerOrder(order)
 
             try:
-                # Map Tips 전역 설정 활성화
                 from qgis.PyQt.QtCore import QSettings
                 QSettings().setValue("qgis/enableMapTips", True)
 
-                # 더 안전하게, 액션 트리거 사용 시도
                 try:
                     if not parent.iface.actionMapTips().isChecked():
                         parent.iface.actionMapTips().trigger()
                 except:
-                    pass  # 액션이 없거나 접근할 수 없는 경우 무시
-
-                print("Map Tips is successfully activated.")
+                    pass
             except Exception as e:
-                print(f"An error occurred while activating Map Tips: {e}")
+                parent.iface.messageBar().pushMessage(
+                    "Map Tips Error",
+                    f"An error occurred while enabling Map Tips: {str(e)}",
+                    level=Qgis.Critical,
+                    duration=5
+                )

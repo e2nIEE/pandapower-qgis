@@ -375,22 +375,21 @@ class ppqgis:
 
     def runpp_action(self):
         """Run runpp to run pandapower network"""
-        print("=== Debug: runpp_action method started in pandapower_qgis.py ===")
-        from .ppqgis_runpp import run_network  # 🆕 새로 만들 파일
+        from .ppqgis_runpp import run_network
 
-        # 1️⃣ 다이얼로그 생성 (처음만)
+        # Create the dialog (first time only)
         if self.first_start_runpp:
             self.first_start_runpp = False
-            self.dlg_runpp = ppRunDialog()  # 🆕 새로 만들 다이얼로그
+            self.dlg_runpp = ppRunDialog()  # New dialog
         uri = None
 
-        # 2️⃣ 현재 상황 확인해서 다이얼로그 설정
-        # 활성 레이어 확인
+        # Configure the dialog based on the current context
+        # Check the active layer
         active_layer = self.iface.activeLayer()
         if active_layer and active_layer.dataProvider().name() == "PandapowerProvider":
-            uri = active_layer.source() # ex: path="C:/Users/slee/Documents/pp_old/mv_oberrhein_wgs.json";network_type="bus";geometry="Point";epsg="4326"
+            uri = active_layer.source()     # ex) path="C:/Users/slee/Documents/pp_old/mv_oberrhein_wgs.json";network_type="bus";geometry="Point";epsg="4326"
         else:
-            # 없으면 첫 번째 판다파워 레이어 찾기
+            # If none, find the first pandapower layer
             layers = QgsProject.instance().mapLayers()
             for layer_id, layer in layers.items():
                 if layer.dataProvider().name() == "PandapowerProvider":
@@ -398,16 +397,16 @@ class ppqgis:
                     break
         if not uri:
             self.iface.messageBar().pushMessage(
-                "알림",
-                "Pandapower 네트워크를 먼저 가져와주세요!",
+                "Notice",
+                "Please import the pandapower network first!",
                 level=Qgis.Warning,
                 duration=3
             )
             return
 
-        # 3️⃣ 다이얼로그에 네트워크 정보 설정
+        # Set network info in the dialog
         self.dlg_runpp.setup_network(uri) # need filename as parameter like imprt method?
 
-        # 4️⃣ 다이얼로그 실행
+        # Run dialog
         self.dlg_runpp.show()
         result = self.dlg_runpp.exec_()
