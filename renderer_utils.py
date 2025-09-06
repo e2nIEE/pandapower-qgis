@@ -1,77 +1,77 @@
-# -*- coding: utf-8 -*-
-"""
-Renderer utility: use the standard ppqgis_import method.
-"""
-
 from qgis.PyQt.QtGui import QColor
 from qgis.core import QgsProject, QgsVectorLayer, QgsApplication, \
-    QgsGraduatedSymbolRenderer, QgsSingleSymbolRenderer, QgsRendererRange, QgsClassificationRange, \
+    QgsRuleBasedRenderer, QgsSingleSymbolRenderer, QgsRendererRange, QgsClassificationRange, \
     QgsMarkerSymbol, QgsLineSymbol, QgsGradientColorRamp, QgsProviderRegistry, QgsProviderMetadata
 
-BUS_LOW_COLOR = "#ccff00"  # lime
-BUS_HIGH_COLOR = "#00cc44"  # green
-LINE_LOW_COLOR = "#0000ff"  # blue
-LINE_HIGH_COLOR = "#ff0022"  # red
+RED_COLOR = "#ff0000"
+GREEN_COLOR = "#00cc44"
+BLUE_COLOR = "#0000ff"
 
 
 def create_power_renderer():
     """
     Returns:
-        QgsRenderer: Created renderer (includes color_ramp when single color)
+        QgsRenderer: Created bus and line renderer (rule-based)
     """
-    bus_color_ramp = QgsGradientColorRamp(QColor(BUS_LOW_COLOR), QColor(BUS_HIGH_COLOR))
-    line_color_ramp = QgsGradientColorRamp(QColor(LINE_LOW_COLOR), QColor(LINE_HIGH_COLOR))
+    # Create a rule-based renderer for the bus layer
+    bus_renderer = QgsRuleBasedRenderer(QgsMarkerSymbol())
+    bus_root_rule = bus_renderer.rootRule()
 
-    classification_method = QgsApplication.classificationMethodRegistry().method("EqualInterval")
+    # Bus rule 1: vm_pu > 1.1 (red)
+    bus_rule_red = bus_root_rule.children()[0].clone()\
+        if bus_root_rule.children() else QgsRuleBasedRenderer.Rule(QgsMarkerSymbol())
+    bus_rule_red.setFilterExpression('"vm_pu" > 1.1')
+    bus_rule_red.setLabel('vm_pu > 1.1')
+    bus_symbol_red = QgsMarkerSymbol()
+    bus_symbol_red.setColor(QColor(RED_COLOR))
+    bus_rule_red.setSymbol(bus_symbol_red)
+    bus_root_rule.appendChild(bus_rule_red)
 
-    # generate symbology for bus layer
-    bus_target = "vm_pu"
-    min_target = "min_vm_pu"
-    max_target = "max_vm_pu"
-    # map value from its possible min/max to 0/100
-    classification_str = f'scale_linear("{bus_target}", 0.9, 1.1, 0, 100)'
+    # Bus rule 2: 0.9 <= vm_pu <= 1.1 (green)
+    bus_rule_green = QgsRuleBasedRenderer.Rule(QgsMarkerSymbol())
+    bus_rule_green.setFilterExpression('"vm_pu" >= 0.9 AND "vm_pu" <= 1.1')
+    bus_rule_green.setLabel('0.9 <= vm_pu <= 1.1')
+    bus_symbol_green = QgsMarkerSymbol()
+    bus_symbol_green.setColor(QColor(GREEN_COLOR))
+    bus_rule_green.setSymbol(bus_symbol_green)
+    bus_root_rule.appendChild(bus_rule_green)
 
-    bus_renderer = QgsGraduatedSymbolRenderer()
-    bus_renderer.setClassificationMethod(classification_method)
-    bus_renderer.setClassAttribute(classification_str)
+    # Bus rule 3: vm_pu < 0.9 (blue)
+    bus_rule_blue = QgsRuleBasedRenderer.Rule(QgsMarkerSymbol())
+    bus_rule_blue.setFilterExpression('"vm_pu" < 0.9')
+    bus_rule_blue.setLabel('vm_pu < 0.9')
+    bus_symbol_blue = QgsMarkerSymbol()
+    bus_symbol_blue.setColor(QColor(BLUE_COLOR))
+    bus_rule_blue.setSymbol(bus_symbol_blue)
+    bus_root_rule.appendChild(bus_rule_blue)
 
-    # add categories (10 categories, 10% increments)
-    for x in range(10):
-        low_bound = x * 10
-        high_bound = (x + 1) * 10 - .0001
-        if x == 9:  # fix for not including 100%
-            high_bound = 100
-        bus_renderer.addClassRange(
-            QgsRendererRange(
-                QgsClassificationRange(f'class {low_bound}-{high_bound}', low_bound, high_bound),
-                QgsMarkerSymbol()
-            )
-        )
-    bus_renderer.updateColorRamp(bus_color_ramp)
+    # Create a rule-based renderer for the line layer
+    line_renderer = QgsRuleBasedRenderer(QgsLineSymbol())
+    line_root_rule = line_renderer.rootRule()
 
+    # Line rule 1: loading_percent > 100 (red)
+    line_rule_red = QgsRuleBasedRenderer.Rule(QgsLineSymbol())
+    line_rule_red.setFilterExpression('"loading_percent" > 100')
+    line_rule_red.setLabel('loading_percent > 100%')
+    line_symbol_red = QgsLineSymbol()
+    line_symbol_red.setColor(QColor(RED_COLOR))
+    line_symbol_red.setWidth(0.6)
+    line_rule_red.setSymbol(line_symbol_red)
+    line_root_rule.appendChild(line_rule_red)
 
-    # generate symbology for line layer
-    line_target = "loading_percent"
+    # Line rule 2: loading_percent <= 100 (green)
+    line_rule_green = QgsRuleBasedRenderer.Rule(QgsLineSymbol())
+    line_rule_green.setFilterExpression('"loading_percent" <= 100')
+    line_rule_green.setLabel('loading_percent <= 100%')
+    line_symbol_green = QgsLineSymbol()
+    line_symbol_green.setColor(QColor(GREEN_COLOR))
+    line_symbol_green.setWidth(0.6)
+    line_rule_green.setSymbol(line_symbol_green)
+    line_root_rule.appendChild(line_rule_green)
 
-    line_renderer = QgsGraduatedSymbolRenderer()
-    line_renderer.setClassificationMethod(classification_method)
-    line_renderer.setClassAttribute(line_target)
-
-    # add categories (10 categories, 10% increments)
-    for x in range(10):
-        low_bound = x * 10
-        high_bound = (x + 1) * 10 - .0001
-        if x == 9:  # fix for not including 100%
-            high_bound = 100
-        line_symbol = QgsLineSymbol()
-        line_symbol.setWidth(.6)
-        line_renderer.addClassRange(
-            QgsRendererRange(
-                QgsClassificationRange(f'class {low_bound}-{high_bound}', low_bound, high_bound),
-                line_symbol
-            )
-        )
-    line_renderer.updateColorRamp(line_color_ramp)
+    # Remove the default 'no filter' rule
+    bus_root_rule.removeChildAt(0)
+    line_root_rule.removeChildAt(0)
 
     return bus_renderer, line_renderer
 
