@@ -10,7 +10,10 @@ if 'network_container' not in sys.modules:
         @classmethod
         def register_network(cls, uri, network_data):
             """
-            Register network data and notify listeners.
+            Register network data for a URI and notify all listeners.
+            Args:
+                uri: Unique identifier for the network
+                network_data: Dictionary containing network information
             """
             if not cls._initialized:
                 cls._initialized = True
@@ -21,7 +24,13 @@ if 'network_container' not in sys.modules:
 
         @classmethod
         def get_network(cls, uri):
-            """Retrieve the registered network data."""
+            """
+            Retrieve the registered network data for a given URI.
+            Args:
+                uri: Unique identifier for the network
+            Returns:
+                dict or None: Network data if found, None otherwise
+            """
             if uri in cls._networks:
                 return cls._networks[uri]
             return None
@@ -29,7 +38,12 @@ if 'network_container' not in sys.modules:
 
         @classmethod
         def add_listener(cls, uri, listener):
-            """Add listner"""
+            """
+            Add a listener for network updates on a specific URI.
+            Args:
+                uri: Unique identifier for the network
+                listener: Object that will receive network update notifications
+            """
             if uri not in cls._listeners:
                 cls._listeners[uri] = []
             cls._listeners[uri].append(listener)
@@ -37,7 +51,12 @@ if 'network_container' not in sys.modules:
 
         @classmethod
         def remove_listener(cls, uri, listener):
-            """remove listner"""
+            """
+            Remove a listener from a specific URI.
+            Args:
+                uri: Unique identifier for the network
+                listener: Object to remove from notifications
+            """
             if uri in cls._listeners:
                 if listener in cls._listeners[uri]:
                     cls._listeners[uri].remove(listener)
@@ -46,7 +65,11 @@ if 'network_container' not in sys.modules:
         @classmethod
         def _notify_all_listeners(cls, uri, network_data):
             """
-            Notify all listeners—avoid concurrency issues.
+            Notify all listeners for a URI about network data changes
+            to avoid concurrency issues.
+            Args:
+                uri: Unique identifier for the network
+                network_data: Dictionary containing updated network information
             """
             if uri in cls._listeners:
                 listeners_count = len(cls._listeners[uri])
@@ -76,7 +99,7 @@ if 'network_container' not in sys.modules:
         @classmethod
         def cleanup_invalid_listeners(cls):
             """
-            Clean up invalid listeners.
+            Remove invalid listeners from all URIs and clean up empty listener lists.
             """
             for uri in list(cls._listeners.keys()):
                 if uri in cls._listeners:
@@ -95,12 +118,12 @@ if 'network_container' not in sys.modules:
 
         @classmethod
         def clear(cls):
-            """Remove all network data."""
+            """Remove all registered network data from the container."""
             cls._networks.clear()
 
         @classmethod
         def is_initialized(cls):
-            """This method check if the container is initialized."""
+            """Check if the container has been initialized."""
             return cls._initialized
 
     # Register in the module registry

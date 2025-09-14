@@ -11,7 +11,15 @@ class MapTipUtils:
     @staticmethod
     def configure_map_tips(layer, vn_kv=None, network_type=None):
         """
-        Configures the Map Tip settings for the Pandapower layer.
+        Configure HTML map tip template for a pandapower layer with network-specific information display.
+        Creates styled tooltips showing relevant attributes based on network element type (bus, line, junction, pipe).
+        Args:
+            layer: QgsVectorLayer to configure map tips for
+            vn_kv: Nominal voltage level (optional, currently unused in implementation)
+            network_type: Type of network element ('bus', 'line', 'junction', 'pipe').
+                         If None, attempts to extract from layer name
+        Returns:
+            bool: True if configuration successful, False if layer is invalid
         """
         if not layer or not isinstance(layer, QgsVectorLayer):
             return False

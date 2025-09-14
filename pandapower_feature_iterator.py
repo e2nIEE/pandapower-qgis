@@ -15,8 +15,10 @@ import json
 class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
     def __init__(self, source: pandapower_feature_source.PandapowerFeatureSource, request: QgsFeatureRequest):
         """
-        Initialize the feature iterator.
-        This class is responsible for the core logic of converting a pandapower dataframe into QGIS features.
+        Initialize the feature iterator for converting pandapower dataframes to QGIS features.
+        Args:
+            source: PandapowerFeatureSource containing provider and network data
+            request: QgsFeatureRequest specifying filtering and transformation requirements
         """
         super().__init__(request)
         self._provider  = source.get_provider()
@@ -53,12 +55,13 @@ class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
 
     def fetchFeature(self, feature: QgsFeature) -> bool:
         """
-        Transform one row as QGIS feature and fetch as next feature.
-        Return true on success.
-        :param feature: Next feature
-        :type feature: QgsFeature
-        :return: True if success
-        :rtype: bool
+        Fetch the next feature from the pandapower dataframe and convert it to QGIS format.
+        Handles geometry creation for points (bus/junction) and lines (line/pipe) with coordinate
+        transformations and spatial filtering.
+        Args:
+            feature: QgsFeature object to populate with data
+        Returns:
+            bool: True if feature was successfully fetched, False if no more features available
         """
         # Exit if there are no more rows to process
         if self._index >= len(self.df):
@@ -160,7 +163,13 @@ class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
 
 
     def __next__(self) -> QgsFeature:
-        """Returns the next value till current is lower than high"""
+        """
+        Return the next QgsFeature in the iteration sequence.
+        Returns:
+            QgsFeature: Next feature in the dataset
+        Raises:
+            StopIteration: When no more features are available
+        """
         feature = QgsFeature()
         if not self.nextFeature(feature):
             raise StopIteration
@@ -169,18 +178,30 @@ class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
 
 
     def __iter__(self) -> PandapowerFeatureIterator:
-        """Returns self as an iterator object"""
+        """
+        Return self as an iterator object and reset index to beginning.
+        Returns:
+            PandapowerFeatureIterator: Self reference for iteration protocol
+        """
         self._index = 0
         return self
 
 
     def rewind(self) -> bool:
-        """Reset the iterator to the beginning"""
+        """
+        Reset the iterator index to the beginning of the dataset.
+        Returns:
+            bool: True indicating successful reset
+        """
         self._index = 0
         return True
 
 
     def close(self) -> bool:
-        """Terminate and clean up the iterator"""
+        """
+        Terminate the iterator and clean up resources by setting index to invalid state.
+        Returns:
+            bool: True indicating successful cleanup
+        """
         self._index = -1
         return True

@@ -141,35 +141,8 @@ def execute_power_calculation(net, function_name, kwargs_dict):
         except Exception as e:
             return False, f"Calculation result verification error: {e}", None
 
-        # Simple data type check
-        if hasattr(net, 'res_bus') and not net.res_bus.empty:
-            for col in net.res_bus.columns[:3]:  # Only first 3
-                dtype = net.res_bus[col].dtype
-
-        # Check for dangerous values
-        dangerous_values_found = False
-        try:
-            if hasattr(net, 'res_bus') and not net.res_bus.empty:
-                for col in ['vm_pu']:  # Only the most important column
-                    if col in net.res_bus.columns:
-                        try:
-                            nan_count = net.res_bus[col].isnull().sum()
-                            if nan_count > 0:
-                                dangerous_values_found = True
-                                print(f"     ⚠️ NaN values found in {col}!")
-                        except Exception as col_error:
-                            dangerous_values_found = True
-        except Exception as e:
-            dangerous_values_found = True
-
-        # Safe mode if dangerous values found
-        if dangerous_values_found:
-            # Currently only generate simple result message
-            result_message = f"⚡ Calculation completed (safe mode)\n📊 Bus: {len(net.bus)} units\n📊 Line: {len(net.line)} units"
-            return True, result_message, net
-        else:
-            result_message = generate_power_result_message(net, function_name)
-            return True, result_message, net
+        result_message = generate_power_result_message(net, function_name)
+        return True, result_message, net
 
     except Exception as e:
         import traceback

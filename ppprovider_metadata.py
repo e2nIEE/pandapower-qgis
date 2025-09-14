@@ -1,24 +1,45 @@
 import re
 from typing import Dict
-#from .ppprovider import PandapowerProvider
 from .pandapower_provider import PandapowerProvider
 from qgis.core import QgsProviderMetadata, QgsReadWriteContext
 
 class PandapowerProviderMetadata(QgsProviderMetadata):
     def __init__(self):
+        """
+        Initialize the PandapowerProvider metadata with provider identification and factory method.
+        Registers the provider with QGIS using name "PandapowerProvider", description, and
+        createProvider factory method reference.
+        """
         super().__init__(
             "PandapowerProvider",
             "Pandapower Network Provider",
-            PandapowerProvider.createProvider  # 팩토리 메서드 참조
+            PandapowerProvider.createProvider  # Factory Method Reference
         )
 
+
     def decodeUri(self, uri):
-        """URI 문자열을 파싱하여 구성요소로 분리"""
+        """
+        Parse URI string into component dictionary using regex pattern matching.
+        Extracts key-value pairs from format: key="value";key2="value2" with support
+        for escaped quotes in values.
+        Args:
+            uri: URI string containing encoded provider parameters
+        Returns:
+            dict: Dictionary of decoded key-value pairs from the URI
+        """
         matches = re.findall(r'(\w+)="((?:\\"|[^"])*)"', uri)
         return {key: value for key, value in matches}
 
+
     def encodeUri(self, parts):
-        """구성요소들을 URI 문자열로 인코딩"""
+        """
+        Encode component dictionary into URI string format.
+        Converts key-value pairs into semicolon-separated string with quoted values.
+        Args:
+            parts: Dictionary of key-value pairs to encode
+        Returns:
+            str: Encoded URI string in format key="value";key2="value2"
+        """
         uri_components = []
         for key, value in parts.items():
             if value:

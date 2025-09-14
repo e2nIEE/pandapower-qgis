@@ -1,5 +1,3 @@
-# current version of ppprovider
-
 from qgis.core import QgsVectorDataProvider, QgsVectorLayer, QgsFeature, QgsField, QgsFields, \
     QgsGeometry, QgsPointXY, QgsLineString, QgsWkbTypes, QgsProject, QgsCoordinateReferenceSystem, \
     QgsFeatureRequest, QgsFeatureIterator, QgsFeatureSource, QgsAbstractFeatureSource, QgsFeatureSink, \
@@ -15,13 +13,12 @@ from .network_container import NetworkContainer
 
 def convert_dtype_to_qmetatype(dtype):
     """
-    Converts a pandas data type (dtype) to a corresponding Qt data type (QMetatype).
+    Convert pandas data type (dtype) to corresponding Qt data type (QMetatype) for QGIS field definition.
     Note: It does not convert actual values. It just returns the corresponding Qt data type for the given pandas data type.
-
-    :param dtype: The pandas data type to convert.
-    :type dtype: pandas dtype
-    :return: The corresponding QMetaType type.
-    :rtype: QMetaType
+    Args:
+        dtype: Pandas data type to convert
+    Returns:
+        QMetaType: Corresponding Qt data type, QMetaType.Invalid if not recognized
     """
     if pd.api.types.is_integer_dtype(dtype):
         return QMetaType.Int
@@ -45,11 +42,27 @@ def convert_dtype_to_qmetatype(dtype):
 class PandapowerProvider(QgsVectorDataProvider):
     @classmethod
     def createProvider(cls, uri, providerOptions = QgsDataProvider.ProviderOptions(), flags = QgsDataProvider.ReadFlags()):
-        """Factory methode that create provider instance"""
+        """
+        Factory methode that create provider instance.
+        Args:
+            uri: Data source URI containing network information
+            providerOptions: Provider-specific options for data access
+            flags: Read flags for data provider behavior
+        Returns:
+            PandapowerProvider: New provider instance
+        """
         return PandapowerProvider(uri, providerOptions, flags)
 
 
     def __init__(self, uri = "", providerOptions = QgsDataProvider.ProviderOptions(), flags = QgsDataProvider.ReadFlags()):
+        """
+        Initialize the pandapower data provider with network data from NetworkContainer.
+        Sets up network type, coordinate system, and registers as a network update listener.
+        Args:
+            uri: Data source URI identifying the network and network type
+            providerOptions: Provider-specific configuration options
+            flags: Read flags controlling provider behavior
+        """
         super().__init__(uri)
         # Bring metadata instace from registry
         metadata_provider = QgsProviderRegistry.instance().providerMetadata("PandapowerProvider")
@@ -97,8 +110,10 @@ class PandapowerProvider(QgsVectorDataProvider):
 
     def merge_df(self):
         """
-        Merges the network type dataframe with its corresponding result dataframe.
-        Only includes data with matching vn_kv value.
+        Merge dataframe of network_type(ex. bus, line) with its corresponding result dataframe
+        to make a integrated dataframe of a layer.
+        Applies filtering based on vn_kv (electrical) or pn_bar (gas) values
+        and handles cases where calculation results may be missing.
         """
         try:
             # Get the dataframes for the network type and its result
@@ -110,77 +125,70 @@ class PandapowerProvider(QgsVectorDataProvider):
                 self.df = pd.DataFrame()  # Set to empty DataFrame
                 return
 
+            if hasattr(self, 'vn_kv') and self.vn_kv is not None:
+                if self.network_type == 'bus':
+                    filtered_indices = df_network_type[df_network_type['vn_kv'] == self.vn_kv].index
+                    df_network_type = df_network_type.loc[filtered_indices]
+            elif hasattr(self, 'pn_bar') and self.pn_bar is not None:
+                if self.network_type == 'junction' and 'pn_bar' in df_network_type.columns:
+                    filtered_indices = df_network_type[df_network_type['pn_bar'] == self.pn_bar].index
+                    df_network_type = df_network_type.loc[filtered_indices]
+
             # Determine the situation
             has_result_data = (df_res_network_type is not None and
                                not df_res_network_type.empty and
                                len(df_res_network_type) > 0)
 
-            # when res column not empty
+            # Process based on the presence or absence of result data
             if has_result_data:
-                # Filter vn_kv before sort
-                if self.vn_kv is not None:
-                    # If line, pipe: merge all
-                    if self.network_type == 'bus':
-                        filtered_indices = df_network_type[df_network_type['vn_kv'] == self.vn_kv].index
-                        df_network_type = df_network_type.loc[filtered_indices]
-                        if df_res_network_type is not None:
-                            df_res_network_type = df_res_network_type.loc[filtered_indices]
-                    elif self.network_type == 'junction':   # pn_bar
-                        if 'vn_kv' in df_network_type.columns:
-                            filtered_indices = df_network_type[df_network_type['vn_kv'] == self.vn_kv].index
-                            df_network_type = df_network_type.loc[filtered_indices]
-                            if df_res_network_type is not None:
-                                df_res_network_type = df_res_network_type.loc[filtered_indices]
-                    print(f"After filtering with vn_kv={self.vn_kv}, df_{self.network_type} shape: {df_network_type.shape}")
+                # Filter the result data to match the indices of the filtered base data
+                available_indices = df_network_type.index
+                df_res_network_type = df_res_network_type.loc[
+                    df_res_network_type.index.intersection(available_indices)
+                ]
 
-                # Sort indices
+                # Sort indices (ensure data consistency)
                 df_network_type.sort_index(inplace=True)
+                df_res_network_type.sort_index(inplace=True)
+
+                # Merge data
+                self.df = pd.merge(df_network_type, df_res_network_type, left_index=True,
+                    right_index=True, suffixes=('', '_res'))
+
+            # when res column of json file is empty
+            else:
+                # Copy only the base data
+                self.df = df_network_type.copy()
+
+                # Add empty result columns (only if the result data structure exists)
                 if df_res_network_type is not None:
-                    df_res_network_type.sort_index(inplace=True)
+                    res_columns = df_res_network_type.columns.tolist()
+                    for col_name in res_columns:
+                        self.df[col_name] = None  # Initialize all result columns to None
 
-                print(f"After sorting df_{self.network_type}\n", df_network_type.head())
-                print(f"After sorting df_res_{self.network_type}\n", df_res_network_type.head())
-
-                # Check if the result dataframe exists
-                if df_res_network_type is not None:
-                    # Merge the two dataframes on their indices
-                    self.df = pd.merge(df_network_type, df_res_network_type, left_index=True, right_index=True, suffixes=('', '_res'))
-                    print("Merged DataFrame (1):") # Debugging
-                    print(self.df.head())
-                else:
-                    # If the result dataframe does not exist, use only the network type dataframe
-                    self.df = df_network_type
-                    print(f"Warning: No res_{self.network_type} exist. Only {self.network_type} returned.")
-
-            # when res column of json file is cleared
-            elif not has_result_data:
-                # Add empty result columns to the base data
-                self.df = df_network_type.copy()  # Copy the base data
-
-                # Add empty columns
-                res_columns = df_res_network_type.columns.tolist()
-                for col_name in res_columns:
-                    self.df[col_name] = None  # Or appropriate default values
-
-            # Check if the merged dataframe is empty
             if self.df.empty:
-                print(f"Warning: Merged dataframe for {self.network_type} is empty.")
+                print(f"Warning: The final DataFrame is empty. {self.network_type}, vn_kv: {getattr(self, 'vn_kv', 'N/A')}")
+                return
 
-            # Create 'pp_type' and 'pp_index' columns
+            # Add meta columns
+            # pp_type: Network type (bus, line, junction, pipe)
             self.df.insert(0, 'pp_type', self.network_type)
+            # pp_index: Index in the original pandapower network
             self.df.insert(1, 'pp_index', self.df.index)
-            # Convert pandas index to string
-            #self.df.insert(1, 'pp_index', self.df.index.astype(str).tolist())
 
         except Exception as e:
-            print(f"Error merging dataframes for {self.network_type}: {str(e)}")
-            return pd.DataFrame()  # Return an empty DataFrame in case of error
+            print(f"❌ An error occurred in merge_df ({self.network_type}): {str(e)}")
+            import traceback
+            traceback.print_exc()
+            self.df = pd.DataFrame()  # Return an empty DataFrame on error
 
 
     def fields(self) -> QgsFields:
         """
-        Return field data of table.
+        Return field list.
         Using lazy initialization pattern, search database only when it needed.
+        Returns:
+            QgsFields: Collection of field definitions with appropriate data types
         """
         if not self.fields_list:
             self.fields_list = QgsFields()
@@ -208,7 +216,13 @@ class PandapowerProvider(QgsVectorDataProvider):
 
 
     def getFeatures(self, request=QgsFeatureRequest()):
-        """Return next feature"""
+        """
+        Create and return a feature iterator for accessing network features.
+        Args:
+            request: Feature request specifying filters and transformations
+        Returns:
+            QgsFeatureIterator: Iterator for accessing pandapower network features
+        """
         return QgsFeatureIterator(
             pandapower_feature_iterator.PandapowerFeatureIterator(
                 pandapower_feature_source.PandapowerFeatureSource(self), request
@@ -218,14 +232,13 @@ class PandapowerProvider(QgsVectorDataProvider):
 
     def changeGeometryValues(self, geometry_map):
         """
-        Changes geometries of existing features.
-
-        :param geometry_map: A QgsGeometryMap whose index contains the feature IDs
-            that will have their geometries changed.
-            The second map parameter being the new geometries themselves.
-        :type geometry_map: typedef QMap<QgsFeatureId, QgsGeometry> QgsGeometryMap
-        :return: True if geometries were changed successfully, False otherwise.
-        :rtype: bool
+        Update geometries of existing features and save changes asynchronously to JSON file.
+        Handles both point geometries(bus/junction) and line geometries(line/pipe) with
+        concurrent save operation protection.
+        Args:
+            geometry_map: Map of feature IDs to new QgsGeometry objects
+        Returns:
+            bool: True if update initiated successfully, False if operation denied or failed
         """
         # Check if an existing save operation is in progress
         if self._save_in_progress:
@@ -361,6 +374,11 @@ class PandapowerProvider(QgsVectorDataProvider):
 
     def on_update_changed_network(self, network_data):
         """
+        Handle network data updates from NetworkContainer notifications.
+        Safely updates internal network object and recreates dataframe while preserving
+        existing data in case of failure.
+        Args:
+            network_data: Updated network data dictionary containing 'net' key
         """
         old_net = self.net
         try:
@@ -390,8 +408,11 @@ class PandapowerProvider(QgsVectorDataProvider):
 
     def _create_updated_dataframe(self):
         """
-        Safely create new dataframe in separate function
-        Copy existing merge_df() logic but don't directly modify self.df
+        Safely create new dataframe from updated network data without modifying existing state.
+        Replicates merge_df() logic but returns new dataframe instead of modifying self.df.
+        Used for on_update_changed_network()
+        Returns:
+            pandas.DataFrame or None: New dataframe with updated data, None if creation failed
         """
         try:
             # Execute existing merge_df logic in new variable
@@ -445,11 +466,13 @@ class PandapowerProvider(QgsVectorDataProvider):
 
     def update_geodata_in_json_async(self, callback=None):
         """
-        Asynchronously updates the changed geodata in the original JSON file.
-        Note: It is method for asynchronous update. For synchronous update, see update_geodata_in_json()
-
-        :param callback: Function to be called after saving is complete.
-                        on_save_complete(success, message, backup_path)
+        Asynchronously update geodata changes in the original JSON file using background thread.
+        Creates backup file before modification and provides UI feedback through callback.
+        Note: It is method for asynchronous update.
+            For synchronous update, see update_geodata_in_json()
+        Args:
+            callback: Function to be called after saving is complete.
+                on_save_complete(success, message, backup_path)
         """
         # Do not process new requests if a save operation is already in progress
         if self._save_in_progress:
@@ -547,10 +570,14 @@ class PandapowerProvider(QgsVectorDataProvider):
 
     def update_geodata_in_json(self, auto_save=True):
         """
-        Update changed geodata of original json file with pandapower API.
-        If auto_save False, changed geodata kept in memory only.
-        Currently support auto save only.
-        Note: It is method for synchronous update. For asynchronous update, see update_geodata_in_json_async()
+        Synchronously update geodata changes in the original JSON file.
+        Creates backup before modification and updates original file with current geometry data.
+        Note: It is for synchronous update. For asynchronous update, see update_geodata_in_json_async()
+        Args:
+            auto_save: If True, saves to file; if False, keeps changes in memory only
+            Currently support auto save only.
+        Returns:
+            bool: True if update successful, False otherwise
         """
         if not auto_save:
             print("Keep changes in memory without saving.")
@@ -622,33 +649,68 @@ class PandapowerProvider(QgsVectorDataProvider):
 
 
     def capabilities(self) -> QgsVectorDataProvider.Capabilities:
+        """
+        Return the capabilities supported by this data provider.
+        Returns:
+            QgsVectorDataProvider.Capabilities
+        """
         return (
             QgsVectorDataProvider.CreateSpatialIndex |
             QgsVectorDataProvider.SelectAtId |
             QgsVectorDataProvider.ChangeGeometries
         )
 
+
     def crs(self) -> QgsCoordinateReferenceSystem:
+        """
+        Get the coordinate reference system for this provider.
+        Returns:
+            QgsCoordinateReferenceSystem: Provider's coordinate reference system
+        """
         return self.sourceCrs()
 
+
     def sourceCrs(self) -> QgsCoordinateReferenceSystem:
+        """
+        Get the source coordinate reference system from current_crs setting.
+        Returns:
+            QgsCoordinateReferenceSystem: Source CRS based on EPSG code
+        Raises:
+            ValueError: If the CRS ID is not valid
+        """
         crs = QgsCoordinateReferenceSystem.fromEpsgId(int(self.current_crs))
         if not crs.isValid():
             raise ValueError(f"CRS ID {self.current_crs} is not valid.")
         print(f"CRS is valid: {crs.authid()}") # Debugging
         return crs
 
+
     @classmethod
     def name(cls) -> str:
+        """
+        Get the provider name identifier.
+        Returns:
+            str: Provider name
+        """
         return "PandapowerProvider"
+
 
     @classmethod
     def description(cls) -> str:
-        """Returns the memory provider description"""
+        """
+        Get the provider description text.
+        Returns:
+            str: Provider description
+        """
         return "PandapowerProvider"
 
+
     def extent(self) -> QgsRectangle:
-        """Calculates the extent of the bend and returns a QgsRectangle"""
+        """
+        Calculates the extent of the band and returns a QgsRectangle.
+        Returns:
+            QgsRectangle: Bounding rectangle containing all features, empty if no valid coordinates
+        """
         if not self._extent:
             try:
                 min_x = float('inf')
@@ -663,12 +725,6 @@ class PandapowerProvider(QgsVectorDataProvider):
 
                 # Point geometry (bus/junction)
                 if self.network_type in ['bus', 'junction']:
-                    '''
-                    min_x = df_geodata['x'].min()
-                    max_x = df_geodata['x'].max()
-                    min_y = df_geodata['y'].min()
-                    max_y = df_geodata['y'].max()
-                    '''
                     for idx, geo_str in df_geodata.items():
                         try:
                             if geo_str:
@@ -690,17 +746,6 @@ class PandapowerProvider(QgsVectorDataProvider):
                 # Line geometry (line/pipe)
                 elif self.network_type in ['line', 'pipe']:
                     # Iterate through the coordinates of each line
-                    '''
-                    for _, row in df_geodata.iterrows():
-                        coords = row.get('coords', [])
-                        if coords:
-                            # coords is already in the form of a list of (x, y) pairs
-                            for x, y in coords:
-                                min_x = min(min_x, x)
-                                max_x = max(max_x, x)
-                                min_y = min(min_y, y)
-                                max_y = max(max_y, y)
-                    '''
                     for idx, geo_str in df_geodata.items():
                         try:
                             if geo_str:
@@ -732,12 +777,12 @@ class PandapowerProvider(QgsVectorDataProvider):
                 traceback.print_exc()
                 return QgsRectangle()
 
+
     def featureCount(self):
         """
-        Returns the number of features in the provider.
-
-        :return: Number of features
-        :rtype: int
+        Get the total number of features in the dataframe.
+        Returns:
+            int: Number of features, 0 if error occurred
         """
         try:
             return len(self.df)
@@ -745,28 +790,51 @@ class PandapowerProvider(QgsVectorDataProvider):
             self.pushError(f"Failed to count features: {str(e)}")
             return 0
 
+
     def featureSource(self):
+        """
+        Create and return a feature source for this provider.
+        Returns:
+            PandapowerFeatureSource: Feature source wrapping this provider
+        """
         return pandapower_feature_source.PandapowerFeatureSource(self)
+
 
     def isValid(self):
         """
-        Return the validity of the data provider.
+        Check if the data provider is in a valid state.
+        Returns:
+            bool: True if provider is valid and ready for use
         """
         return self._is_valid
 
     def storageType(self):
         """
-        Returns the permanent storage type for this layer as a friendly name.
+        Get a description of the permanent storage type for this layer.
+        Returns:
+            str: Human-readable description of storage format
         """
         return f"{self.network_type} layer is Pandapower Network in json format"
 
+
     def wkbType(self):
+        """
+        Get the Well-Known Binary geometry type for features in this provider.
+        Returns:
+            QgsWkbTypes: Point for bus/junction, LineString for line/pipe
+        """
         if self.network_type == 'bus' or self.network_type == 'junction':
             return QgsWkbTypes.Point
         elif self.network_type == 'line' or self.network_type == 'pipe':
             return QgsWkbTypes.LineString
 
+
     def unload(self):
+        """
+        Clean up provider resources when being destroyed.
+        Removes network update listener, waits for background save operations to complete,
+        and unregisters the provider from the registry.
+        """
         # Remove from listener
         NetworkContainer.remove_listener(self.uri, self)
         # Wait until the running save thread completes
@@ -774,3 +842,5 @@ class PandapowerProvider(QgsVectorDataProvider):
             self._save_thread.wait()
         # Remove custom data provider when it is deleted
         QgsProviderRegistry.instance().removeProvider('PandapowerProvider')
+
+

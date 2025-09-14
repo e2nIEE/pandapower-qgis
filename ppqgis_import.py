@@ -28,7 +28,6 @@ from qgis.core import QgsProject, QgsVectorLayer, QgsApplication, \
     QgsGraduatedSymbolRenderer, QgsSingleSymbolRenderer, QgsRendererRange, QgsClassificationRange, \
     QgsMarkerSymbol, QgsLineSymbol, QgsGradientColorRamp, QgsProviderRegistry, QgsProviderMetadata
 
-from .ppprovider import PandapowerProvider
 from .network_container import NetworkContainer
 from .pandapower_maptip import MapTipUtils
 from .renderer_utils import create_power_renderer, create_pipe_renderer
