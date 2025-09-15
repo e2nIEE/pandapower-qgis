@@ -308,9 +308,9 @@ class ppRunDialog(QDialog):
             #'consider_line_temperature': self.consider_line_temp_cb.isChecked(),
             #'distributed_slack': self.distributed_slack_cb.isChecked(),
 
-            # Visual options
-            'update_renderer': self.update_renderer_cb.isChecked(),
-            'show_results': self.show_results_cb.isChecked(),
+            # # Visual options
+            # 'update_renderer': self.update_renderer_cb.isChecked(),
+            # 'show_results': self.show_results_cb.isChecked(),
 
             # Network infos
             'network_type': self.network_type
