@@ -43,9 +43,9 @@ class ppRunDialog(QDialog):
         self.create_runpp_options_group()
         main_layout.addWidget(self.runpp_options_group)
 
-        # 3. Advanced option group
-        self.create_advanced_options_group()
-        main_layout.addWidget(self.advanced_options_group)
+        # # 3. Advanced option group
+        # self.create_advanced_options_group()
+        # main_layout.addWidget(self.advanced_options_group)
 
         # 4. Progress group
         self.create_progress_group()

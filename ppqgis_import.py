@@ -83,15 +83,13 @@ def power_network(parent, file) -> None:
             as_file = False
         layer_name = parent.dlg_import.layerNameEdit.text()
         run_pandapower = parent.dlg_import.runpp.isChecked()
-        render = parent.dlg_import.gradRender.isChecked()
+        user_wants_render = parent.dlg_import.gradRender.isChecked()
 
         # if res column is cleared, render off
         has_result_data = (hasattr(net, 'res_bus') and
                            net.res_bus is not None and
                            not net.res_bus.empty and
                            len(net.res_bus) > 0)
-        if not has_result_data:
-            render = False  # Use a simple coloring method
 
         try:
             crs = int(parent.dlg_import.projectionSelect.crs().authid().split(':')[1])
@@ -101,6 +99,10 @@ def power_network(parent, file) -> None:
         # run pandapower if selected
         if run_pandapower:
             pp.runpp(net)
+            has_result_data = (hasattr(net, 'res_bus') and
+                               net.res_bus is not None and
+                               not net.res_bus.empty and
+                               len(net.res_bus) > 0)
 
         root = QgsProject.instance().layerTreeRoot()
         # check if group exists
@@ -116,32 +118,46 @@ def power_network(parent, file) -> None:
         bus_color_ramp = QgsGradientColorRamp(QColor(BUS_LOW_COLOR), QColor(BUS_HIGH_COLOR))
         line_color_ramp = QgsGradientColorRamp(QColor(LINE_LOW_COLOR), QColor(LINE_HIGH_COLOR))
 
-        if render:
-            bus_renderer, line_renderer = create_power_renderer()
+        bus_renderer_by_load = None
+        line_renderer_by_load = None
+        if user_wants_render and has_result_data:
+            bus_renderer_by_load, line_renderer_by_load = create_power_renderer()
 
         # find min and max voltage. Used for finding color of symbols.
         max_kv = max(voltage_levels)
         min_kv = min(voltage_levels)
+        def map_to_range(x: float, xmin: float, xmax: float, min: float = 0.0, max: float = 1.0):
+            return (x - xmin) / (xmax - xmin) * (max - min) + min
+
         for vn_kv in voltage_levels:
             buses, lines = filter_by_voltage(net, vn_kv)
 
-            # Color layers by voltage level
-            if not render:
-                def map_to_range(x: float, xmin: float, xmax: float, min: float = 0.0, max: float = 1.0):
-                    return (x - xmin) / (xmax - xmin) * (max - min) + min
+            if user_wants_render and has_result_data:
+                # Case 1: User wants load-based coloring and res data is available
+                bus_renderer = bus_renderer_by_load
+                line_renderer = line_renderer_by_load
 
+            elif user_wants_render and not has_result_data:
+                # Case 2: User wants load-based coloring but res data is not available
                 bus_symbol = QgsMarkerSymbol()
+                bus_symbol.setColor(QColor("#808080"))  # gray
                 bus_renderer = QgsSingleSymbolRenderer(bus_symbol)
 
                 line_symbol = QgsLineSymbol()
                 line_symbol.setWidth(.6)
+                line_symbol.setColor(QColor("#808080"))  # gray
                 line_renderer = QgsSingleSymbolRenderer(line_symbol)
-                # set color of symbol based on vn_kv
-                #bus_symbol.setColor(bus_color_ramp.color(map_to_range(vn_kv, min_kv, max_kv)))
-                #line_symbol.setColor(line_color_ramp.color(map_to_range(vn_kv, min_kv, max_kv)))
-                # If no result, use gray to display network
-                bus_symbol.setColor(QColor("#808080"))
-                line_symbol.setColor(QColor("#808080"))
+
+            else:
+                # Case 3 & 4: User wants voltage level-based coloring (regardless of res data availability)
+                bus_symbol = QgsMarkerSymbol()
+                bus_symbol.setColor(bus_color_ramp.color(map_to_range(vn_kv, min_kv, max_kv)))
+                bus_renderer = QgsSingleSymbolRenderer(bus_symbol)
+
+                line_symbol = QgsLineSymbol()
+                line_symbol.setWidth(.6)
+                line_symbol.setColor(line_color_ramp.color(map_to_range(vn_kv, min_kv, max_kv)))
+                line_renderer = QgsSingleSymbolRenderer(line_symbol)
 
             bus = {
                 'object': buses,
@@ -153,7 +169,7 @@ def power_network(parent, file) -> None:
                 'suffix': 'line',
                 'renderer': line_renderer,
             }
-            print('Debugging: checkpoint in ppimport, power_network')
+
             # create bus and line layers if they contain features
             for obj in [bus, line]:
                 # avoid adding empty layer

@@ -1,8 +1,8 @@
 # pandapower-qgis
 
-Plugin for interaction between QGis and pandapower or pnadapipes Networks
+Plugin for interaction between QGis and pandapower Networks.
 
-Import and export of pandapower and pandapipes networks.
+Import and export of pandapower networks.
 
 ---
 
@@ -11,11 +11,8 @@ Import and export of pandapower and pandapipes networks.
 - [pandapower](#pandapower)
   - [import from pandapower](#import-from-pandapower)
   - [Editing the network](#editing-the-network-in-qgis)
+  - [run pandapower network](#run_pandapower_network)
   - [export to pandapower](#export-to-pandapower)
-- [pandapipes](#pandapipes) 
-  - [import from pandapipes](#import-from-pandapipes)
-  - [Editing the network](#editing-the-network-in-qgis-1)
-  - [export to pandapipes](#export-to-pandapipes)
 
 ---
 
@@ -42,7 +39,9 @@ is executed before exporting any data.
 
 #### • color lines by load
 If this option is selected the network is coloured by load for each line individually.
-If not the different voltage levels are colored in different colors.
+However, if this option is selected but the network's power was not calculated,
+the network will be grayed out.
+If this option is not selected, the different voltage levels are colored in different colors.
 
 #### • Select save folder
 If no folder is selected the network will be loaded into QGIS from memory.
@@ -91,6 +90,30 @@ It is recommended to select a save folder.
 | max_loading_percent | float   |               |                                   |
 | pp_index            | integer | None          | these might change after export   |
 
+To change the feature's position through mouse clicks:  
+click on the desired layer → activate layer editing mode → select the Move Feature tool  
+
+Click on the feature and then click on the desired location to change the feature's position.  
+When the layer editing mode is deactivated, the changes can be saved,
+and a backup file will be created to preserve the previous data.
+---
+
+### run pandapower network
+![import icon][run_icon]
+
+#### • RunPP Options
+Here you can configure the options required for running pandapower network.
+
+- Function: various run functions can be selected.
+- Parameter(**kwargs): You can directly input parameters in the following formats.
+	- key1=value1, key2=value2
+	- {'key1': 'value1', 'key2': value2}
+	- key1='value1', key2=value2
+- Note: If you enter an incorrect parameter name, the function will run with the default value for that parameter.
+- Network initialization method: auto, flat, results
+
+---
+
 ### export to pandapower
 ![export icon][export_icon]
 
@@ -116,103 +139,6 @@ that have `pp_type` set to `bus` or `line`.
 
 ---
 
-## pandapipes
-
-### import from pandapipes
-![import icon][import_icon]
-
-The plugin can automatically detect if you are importing a pandapower
-or pandapipes network, it will show only relevant settings.
-
-#### • crs - coordinate reference system
-Selecting the appropriate crs is required as pandapipes does
-not store this information by default.
-
-The crs for the resulting GeoJSON is taken from the QGIS Project.
-GeoJSON has deprecated support for crs, WGS-84 is highly recommended.
-If a specific crs is preferred it is recommended to create a Project
-with that crs first and then import the network.
-
-#### • run pandapipes
-If this option is selected `pandapipes.runpp()`
-is executed before exporting any data.
-
-#### • color pipes by pressure
-If this option is selected the network is coloured by pressure for each line individually.
-If not the different pressure levels are colored in different colors.
-
-#### • Select save folder
-If no folder is selected the network will be loaded into QGIS from memory.
-The network then can not be edited directly.
-If a folder is selected each layer will be saved there as a GeoJSON file and
-then loaded into QGIS. The network can then be edited directly from within QGIS.
-It is recommended to select a save folder.
-
----
-
-### Editing the network in QGIS
-
-#### Required Attributes
-
-`junction`
-
-| name     | type  | comment                 |
-|----------|-------|-------------------------|
-| pn_bar   | float | fluid pressure in bar   |
-| tfluid_k | float | fluid temperature in °K |
-
-`pipe`
-
-| name       | type    | comment                     |
-|------------|---------|-----------------------------|
-| from_bus   | integer | pandapower id               |
-| to_bus     | integer | pandapower id               |
-| diameter_m | float   |                             |
-
-#### Optional Attributes
-
-`junction`
-
-| name       | type    | default value | comment                         |
-|------------|---------|---------------|---------------------------------|
-| height_m   | float   | 0             |                                 |
-| name       | string  | None          |                                 |
-| pp_index   | int     | None          | these might change after export |
-| in_service | boolean | True          |                                 |
-
-`pipe`
-
-| name             | type    | default value | comment                              |
-|------------------|---------|---------------|--------------------------------------|
-| length_km        | float   |               | if not present derived from QGIS     |
-| k_mm             | float   | 1.0           | pipe roughness                       |
-| loss_coefficient | float   | 0.0           | additional pressure loss coefficient |
-| sections         | integer | 1             | number of internal pipe sections     |
-| alpha_w_per_m2k  | float   | 0.0           | heat transfer coefficient            |
-| qext_w           | float   | 0.0           | external heat input                  |
-| text_k           | float   | 293           | ambient temperature of pipe          |
-| name             | string  | None          |                                      |
-| in_service       | boolean | True          |                                      |
-| pp_index         | integer | None          | these might change after export      |
-
-### export to pandapipes
-![export icon][export_icon]
-
-#### • Name
-This is optional. The name is set when creating the pandapower network
-
-#### • Fluid
-If the fluid is in the standard library this is used to create the pipes.
-If not the pipes are created using the properties from the attributes table.
-
-#### • add standard types
-If selected the pandapipes standard types are added to the
-network.
-
-#### • Select layers to export
-The plugin attempts to export all selected layers.
-It will export all features of vector layers
-that have `pp_type` set to `junction` or `pipe`.
-
 [import_icon]: ./pp_import.svg "import to QGIS"
 [export_icon]: ./pp_export.svg "export from QGIS"
+[run_icon]: ./pp.png "run pandapower network"
