@@ -77,10 +77,10 @@ def power_network(parent, file) -> None:
     result = parent.dlg_import.exec_()
     # See if OK was pressed
     if result:
-        folder_name = parent.dlg_import.folderSelect.filePath()
-        as_file = True
-        if not folder_name:
-            as_file = False
+        # folder_name = parent.dlg_import.folderSelect.filePath()
+        # as_file = True
+        # if not folder_name:
+        #     as_file = False
         layer_name = parent.dlg_import.layerNameEdit.text()
         run_pandapower = parent.dlg_import.runpp.isChecked()
         user_wants_render = parent.dlg_import.gradRender.isChecked()
@@ -176,7 +176,7 @@ def power_network(parent, file) -> None:
                 if not obj['object']:
                     continue
                 type_layer_name = f'{layer_name}_{str(vn_kv)}_{obj["suffix"]}'
-                file_path = f'{folder_name}\\{type_layer_name}.geojson'
+                # file_path = f'{folder_name}\\{type_layer_name}.geojson'
                 '''
                 gj = geo.dump_to_geojson(net,
                                          nodes=obj['object'] if obj['suffix'] == 'bus' else False,
@@ -294,10 +294,10 @@ def pipes_network(parent, file):
     result = parent.dlg_import.exec_()
     # See if OK was pressed
     if result:
-        folder_name = parent.dlg_import.folderSelect.filePath()
-        as_file = True
-        if not folder_name:
-            as_file = False
+        # folder_name = parent.dlg_import.folderSelect.filePath()
+        # as_file = True
+        # if not folder_name:
+        #     as_file = False
         layer_name = parent.dlg_import.layerNameEdit.text()
         run_pandapipes = parent.dlg_import.runpp.isChecked()
         render = parent.dlg_import.gradRender.isChecked()
@@ -416,7 +416,7 @@ def pipes_network(parent, file):
                 if not obj['object']:
                     continue
                 type_layer_name = f'{layer_name}_{str(pn_bar)}_{obj["suffix"]}'
-                file_path = f'{folder_name}\\{type_layer_name}.geojson'
+                # file_path = f'{folder_name}\\{type_layer_name}.geojson'
                 '''
                 gj = geo.dump_to_geojson(net,
                                          nodes=obj['object'] if obj['suffix'] == 'junction' else False,

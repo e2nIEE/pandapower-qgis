@@ -19,7 +19,7 @@ class ppRunDialog(QDialog):
         # Dialog default settings
         self.setWindowTitle(self.tr("Run Pandapower Network"))
         self.setMinimumWidth(450)
-        self.setMinimumHeight(600)
+        self.setMinimumHeight(480)
 
         # Save network information
         self.uri = None
@@ -186,12 +186,15 @@ class ppRunDialog(QDialog):
         layout = QVBoxLayout()
 
         self.progress_bar = QProgressBar()
-        self.progress_bar.setVisible(False)
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setEnabled(False)
+        # self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
 
         self.result_text = QTextEdit()
         self.result_text.setMaximumHeight(100)
-        self.result_text.setVisible(False)
+        self.result_text.clear()
+        # self.result_text.setVisible(False)
         layout.addWidget(self.result_text)
 
         self.progress_group.setLayout(layout)
@@ -369,12 +372,12 @@ class ppRunDialog(QDialog):
             self.run_button.setText("Calculating...")  # Change button text
 
             # Start progress bar
-            self.progress_bar.setVisible(True)  # Make progress bar visible
+            # self.progress_bar.setVisible(True)  # Make progress bar visible
             self.progress_bar.setRange(0, 0)  # Set to infinite progress bar
 
             # Prepare result text area
             if hasattr(self, 'result_text'):
-                self.result_text.setVisible(True)  # Make text area visible
+                # self.result_text.setVisible(True)  # Make text area visible
                 self.result_text.clear()  # Clear previous content
 
         except Exception as e:
@@ -449,8 +452,9 @@ class ppRunDialog(QDialog):
 
             # Clean up progress bar
             if hasattr(self, 'progress_bar'):
-                self.progress_bar.setVisible(False)
+                # self.progress_bar.setVisible(False)
                 self.progress_bar.setRange(0, 100)
+                self.progress_bar.setValue(0)
 
             # Leave result text as is (so user can check results)
             # self.result_text.setVisible(False)  # This line is commented out!
@@ -474,7 +478,7 @@ class ppRunDialog(QDialog):
 
             if hasattr(self, 'result_text'):
                 self.result_text.clear()
-                self.result_text.setVisible(False)
+                # self.result_text.setVisible(False)
 
             event.accept()  # Allow opening
         except Exception as e:

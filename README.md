@@ -43,13 +43,6 @@ However, if this option is selected but the network's power was not calculated,
 the network will be grayed out.
 If this option is not selected, the different voltage levels are colored in different colors.
 
-#### • Select save folder
-If no folder is selected the network will be loaded into QGIS from memory.
-The network then can not be edited directly.
-If a folder is selected each layer will be saved there as a GeoJSON file and
-then loaded into QGIS. The network can then be edited directly from within QGIS.
-It is recommended to select a save folder.
-
 ---
 
 ### Editing the network in QGIS
@@ -104,7 +97,7 @@ and a backup file will be created to preserve the previous data.
 #### • RunPP Options
 Here you can configure the options required for running pandapower network.
 
-- Function: various run functions can be selected.
+- Function: Various run functions can be selected.
 - Parameter(**kwargs): You can directly input parameters in the following formats.
 	- key1=value1, key2=value2
 	- {'key1': 'value1', 'key2': value2}
