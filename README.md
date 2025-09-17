@@ -8,21 +8,23 @@ Import and export of pandapower networks.
 
 ## Overview
 
-- [pandapower](#pandapower)
-  - [import from pandapower](#import-from-pandapower)
+- [Pandapower](#pandapower)
+  - [Import from pandapower](#import-from-pandapower)
   - [Editing the network](#editing-the-network-in-qgis)
-  - [run pandapower network](#run_pandapower_network)
-  - [export to pandapower](#export-to-pandapower)
+  - [Run pandapower network](#run_pandapower_network)
+  - [Export to pandapower](#export-to-pandapower)
 
 ---
 
 ## pandapower
 
-### import from pandapower 
-![import icon][import_icon]
-
+### Import from pandapower 
+![import icon][import_icon]  
+This icon can be found in the menu.  
 The plugin can automatically detect if you are importing a pandapower
 or pandapipes network, it will show only relevant settings.
+
+![import_guide][import_guide]  
 
 #### • crs - coordinate reference system
 Selecting the appropriate crs is required as pandapower does
@@ -82,21 +84,28 @@ If this option is not selected, the different voltage levels are colored in diff
 | parallel            | integer | 1             |                                   |
 | max_loading_percent | float   |               |                                   |
 | pp_index            | integer | None          | these might change after export   |
+<br>
+To change the feature's position through mouse clicks
 
-To change the feature's position through mouse clicks:  
-click on the desired layer → activate layer editing mode → select the Move Feature tool  
+![move_feature_guide]
+
+click a layer to edit in Layers panel and activate layer editing mode
+![toggle_editing_icon].  
+Then select the Move Feature tool ![move_feature_icon].
 
 Click on the feature and then click on the desired location to change the feature's position.  
+Click ![toggle_editing_icon] once more to save the edit.  
 When the layer editing mode is deactivated, the changes can be saved,
 and a backup file will be created to preserve the previous data.
 ---
 
-### run pandapower network
-![import icon][run_icon]
+### Run pandapower network
+![run_icon][run_icon]  
+This icon can be found in the menu.  
+Here you can configure the options required for running pandapower network.  
 
+![run_guide]
 #### • RunPP Options
-Here you can configure the options required for running pandapower network.
-
 - Function: Various run functions can be selected.
 - Parameter(**kwargs): You can directly input parameters in the following formats.
 	- key1=value1, key2=value2
@@ -107,9 +116,11 @@ Here you can configure the options required for running pandapower network.
 
 ---
 
-### export to pandapower
-![export icon][export_icon]
+### Export to pandapower
+![export icon][export_icon]  
+This icon can be found in the menu.
 
+![export_guide][export_guide]
 #### • Name
 This is optional. The name is set when creating the pandapower network
 
@@ -135,3 +146,9 @@ that have `pp_type` set to `bus` or `line`.
 [import_icon]: ./pp_import.svg "import to QGIS"
 [export_icon]: ./pp_export.svg "export from QGIS"
 [run_icon]: ./pp.png "run pandapower network"
+[import_guide]: user_manual_image/import.png "how to import"
+[run_guide]: user_manual_image/run.png "how to run"
+[move_feature_guide]: user_manual_image/move_feature.png "how to move"
+[export_guide]: user_manual_image/export.png "how to export"
+[toggle_editing_icon]: user_manual_image/toggle_editing_icon.png "toggle editing icon"
+[move_feature_icon]: user_manual_image/move_feature_icon.png "move feature icon"
