@@ -97,6 +97,7 @@ Click on the feature and then click on the desired location to change the featur
 Click ![toggle_editing_icon] once more to save the edit.  
 When the layer editing mode is deactivated, the changes can be saved,
 and a backup file will be created to preserve the previous data.
+
 ---
 
 ### Run pandapower network
