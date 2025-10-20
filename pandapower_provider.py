@@ -7,6 +7,7 @@ import json
 import pandas as pd
 import pandapower as pp
 import pandapipes as ppi
+import os
 from . import pandapower_feature_iterator, pandapower_feature_source
 from .network_container import NetworkContainer
 
@@ -71,11 +72,40 @@ class PandapowerProvider(QgsVectorDataProvider):
         self._provider_options = providerOptions
         self._flags = flags
 
+        # Initialize all attributes with default values (prevents AttributeError while reopen qgis project file)
+        self._is_valid = False
+        self.net = None
+        self.network_type = self.uri_parts.get('network_type', None)
+        self.type_layer_name = None
+        self.current_crs = None
+        self.crs = None
+        self.fields_list = None
+        self.df = None
+        self._extent = None
+        self.vn_kv = None
+        self.pn_bar = None
+        self._save_in_progress = False
+        self._save_thread = None
+
         # Bring network data from container
         network_data = NetworkContainer.get_network(uri)
+        # if network_data is None:
+        #     self._is_valid = False
+        #     return
+
+        # If container is empty (e.g., after project reload), load from file
         if network_data is None:
-            self._is_valid = False
-            return
+            print(f"⚠️ NetworkContainer is empty for URI: {uri}")
+            print(f"🔄 Attempting to load network from file...")
+            network_data = self._load_network_from_file()
+
+            if network_data is None:
+                print(f"❌ Failed to load network from file: {self.uri_parts.get('path')}")
+                return  # Safe early return - all attributes already initialized
+
+            # Successfully loaded - register to container
+            print(f"✅ Network loaded from file, registering to container...")
+            NetworkContainer.register_network(uri, network_data)
 
         # Setting network data
         self.net = network_data['net']
@@ -106,6 +136,56 @@ class PandapowerProvider(QgsVectorDataProvider):
 
         # Register a notification subscription with NetworkContainer.
         NetworkContainer.add_listener(self.uri, self)
+
+
+    def _load_network_from_file(self):
+        """
+        Load network data from JSON file when NetworkContainer is empty (e.g., after project reload).
+        This restores the network state from the original file.
+        Returns:
+            dict or None: Network data dictionary if successful, None if failed
+        """
+        try:
+            file_path = self.uri_parts.get('path', '')
+            if not file_path or not os.path.exists(file_path):
+                print(f"⚠️ File not found: {file_path}")
+                return None
+
+            # Determine network type and load accordingly
+            if self.network_type in ['bus', 'line']:
+                # Load electrical network (pandapower)
+                net = pp.from_json(file_path)
+
+                # Add vn_kv column to lines (same as in ppqgis_import.py)
+                pp.add_column_from_node_to_elements(net, 'vn_kv', True, 'line')
+
+                vn_kv = float(self.uri_parts.get('voltage_level', 0))
+                epsg = int(self.uri_parts.get('epsg', 4326))
+
+                # Reconstruct type_layer_name from URI parts
+                layer_base_name = os.path.basename(file_path).split('.')[0]
+                type_layer_name = f'{layer_base_name}_{vn_kv}_{self.network_type}'
+
+                print(f"✅ Loaded pandapower network: vn_kv={vn_kv}")
+
+                return {
+                    'net': net,
+                    'vn_kv': vn_kv,
+                    'type_layer_name': type_layer_name,
+                    'network_type': self.network_type,
+                    'current_crs': epsg
+                }
+            elif self.network_type in ['junction', 'pipe']:
+                pass
+            else:
+                print(f"❌ Unknown network_type: {self.network_type}")
+                return None
+
+        except Exception as e:
+            print(f"❌ Error loading network from file: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None
 
 
     def merge_df(self):

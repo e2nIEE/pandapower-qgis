@@ -9,7 +9,7 @@ from qgis.utils import iface
 from qgis.PyQt.QtCore import QThread, pyqtSignal
 from qgis.PyQt.QtWidgets import QMessageBox
 
-from renderer_utils import create_power_renderer
+from .renderer_utils import create_power_renderer
 from .network_container import NetworkContainer
 
 
