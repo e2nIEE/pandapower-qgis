@@ -78,18 +78,25 @@ class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
         # Geometry settings
         has_valid_geometry = False
         if idx in self.df_geodata.index:
-            row_geo = json.loads(self.df_geodata.loc[idx])
+            geo_str = self.df_geodata.loc[idx]
+            # Check if geo data exists (not None and not NaN) - simbench may have no line.geo
+            geo_exists = geo_str is not None and not pd.isna(geo_str)
+
             try:
                 if self._provider.network_type in ['bus', 'junction']:
-                    if 'coordinates' in row_geo and isinstance(row_geo['coordinates'], list) and len(row_geo['coordinates']) >= 2:
-                        # Create point geometry
-                        x = row_geo['coordinates'][0]
-                        y = row_geo['coordinates'][1]
-                        geometry = QgsGeometry.fromPointXY(QgsPointXY(x, y))
-                        feature.setGeometry(geometry)
-                        has_valid_geometry = (x != 0 or y != 0)
+                    if geo_exists:
+                        row_geo = json.loads(geo_str)
+                        if 'coordinates' in row_geo and isinstance(row_geo['coordinates'], list) and len(row_geo['coordinates']) >= 2:
+                            # Create point geometry
+                            x = row_geo['coordinates'][0]
+                            y = row_geo['coordinates'][1]
+                            geometry = QgsGeometry.fromPointXY(QgsPointXY(x, y))
+                            feature.setGeometry(geometry)
+                            has_valid_geometry = (x != 0 or y != 0)
+                        else:
+                            print(f"Warning: Invalid coordinates structure for {self._provider.network_type} index {idx}")
                     else:
-                        print(f"Warning: Invalid coordinates structure for {self._provider.network_type} index {idx}")
+                        print(f"Warning: No geo data found for {self._provider.network_type} index {idx}")
 
                     if not has_valid_geometry:
                         print(f"Warning: No coordinates found for {self._provider.network_type} index {idx}")
@@ -108,16 +115,69 @@ class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
                             self._index += 1
                             return self.fetchFeature(feature)
 
-                if self._provider.network_type in ['line', 'pipe']:
-                    # Create line geometry
-                    coords = row_geo.get('coordinates', [])
-                    if coords:
+                elif self._provider.network_type in ['line', 'pipe']:
+                    # Process line/pipe geometry
+                    coords = None
+
+                    if geo_exists:
+                        # Case 1: line geo data exists (like mv_oberrhein.json)
+                        row_geo = json.loads(geo_str)
+                        coords = row_geo.get('coordinates', [])
+                        if not coords:
+                            print(
+                                f"Warning: Empty coordinates in geo data for {self._provider.network_type} index {idx}")
+                    else:
+                        # Case 2: no line geo data (SimBench format) - auto-generate straight line
+                        print(
+                            f"Info: No geo data for {self._provider.network_type} index {idx}, generating straight line from bus coordinates")
+
+                        # Determine the bus column names based on network type
+                        if self._provider.network_type == 'line':
+                            from_node = 'from_bus'
+                            to_node = 'to_bus'
+                            bus_table = 'bus'
+                        else:  # pipe
+                            from_node = 'from_junction'
+                            to_node = 'to_junction'
+                            bus_table = 'junction'
+
+                        # Get from and to bus/junction indices
+                        from_bus_idx = row[from_node]
+                        to_bus_idx = row[to_node]
+
+                        # Access bus/junction geodata from the network
+                        bus_geodata = getattr(self._provider.net, bus_table).geo
+
+                        # Check if both buses exist in geodata
+                        if from_bus_idx in bus_geodata.index and to_bus_idx in bus_geodata.index:
+                            from_geo_str = bus_geodata.loc[from_bus_idx]
+                            to_geo_str = bus_geodata.loc[to_bus_idx]
+
+                            # Parse bus coordinates
+                            if from_geo_str and not pd.isna(from_geo_str) and to_geo_str and not pd.isna(to_geo_str):
+                                from_geo = json.loads(from_geo_str)
+                                to_geo = json.loads(to_geo_str)
+
+                                # Create straight line coordinates
+                                coords = [
+                                    from_geo['coordinates'],
+                                    to_geo['coordinates']
+                                ]
+                            else:
+                                print(
+                                    f"Warning: Missing bus geo data for {self._provider.network_type} index {idx} (from_bus={from_bus_idx}, to_bus={to_bus_idx})")
+                        else:
+                            print(
+                                f"Warning: Bus not found in geodata for {self._provider.network_type} index {idx} (from_bus={from_bus_idx}, to_bus={to_bus_idx})")
+
+                    # Create line geometry if we have coordinates
+                    if coords and len(coords) >= 2:
                         points = [QgsPointXY(x, y) for x, y in coords]
                         geometry = QgsGeometry(QgsLineString(points))
                         feature.setGeometry(geometry)
                         has_valid_geometry = True
                     else:
-                        print(f"Warning: No coordinates found for {self._provider.network_type} index {idx}")
+                        print(f"Warning: Could not create line geometry for {self._provider.network_type} index {idx}")
 
                     # Apply CRS transformation
                     if has_valid_geometry and not self._transform.isShortCircuited():

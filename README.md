@@ -85,7 +85,7 @@ If this option is not selected, the different voltage levels are colored in diff
 | max_loading_percent | float   |               |                                   |
 | pp_index            | integer | None          | these might change after export   |
 <br>
-To change the feature's position through mouse clicks
+To change the feature's position through mouse clicks:  
 
 ![move_feature_guide]
 
@@ -100,7 +100,7 @@ and a backup file will be created to preserve the previous data.
 
 ---
 
-### Run pandapower network
+### Run pandapower load flow
 ![run_icon][run_icon]  
 This icon can be found in the menu.  
 Here you can configure the options required for running pandapower network.  
@@ -112,6 +112,8 @@ Here you can configure the options required for running pandapower network.
 	- key1=value1, key2=value2
 	- {'key1': 'value1', 'key2': value2}
 	- key1='value1', key2=value2
+- Note: Information about the runpp function and options can be found at the link below.
+    https://pandapower.readthedocs.io/en/latest/powerflow/ac.html
 - Note: If you enter an incorrect parameter name, the function will run with the default value for that parameter.
 - Network initialization method: auto, flat, results
 

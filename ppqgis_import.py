@@ -211,8 +211,11 @@ def power_network(parent, file) -> None:
                 NetworkContainer.register_network(uri, network_data)
 
                 layer = QgsVectorLayer(uri, type_layer_name, "PandapowerProvider")
-
                 layer.setRenderer(obj['renderer'])
+
+                # Set field edit capabilities for changeAttributeValues() from pandapower_provider.py
+                configure_field_edit_permissions(layer, obj["suffix"])
+
                 # add layer to group
                 QgsProject.instance().addMapLayer(layer, False)
                 group.addLayer(layer)
@@ -486,3 +489,36 @@ def pipes_network(parent, file):
                     level=Qgis.Critical,
                     duration=5
                 )
+
+
+def configure_field_edit_permissions(layer, network_type):
+    """
+    Configure which fields are editable in the Attribute Table.
+    Uses the provider's logic to determine editability.
+    Args:
+        layer: QgsVectorLayer to configure
+        network_type: 'bus', 'line', 'junction', or 'pipe'
+    """
+    provider = layer.dataProvider()
+
+    # Check if provider has the is_field_editable method
+    if not hasattr(provider, 'is_field_editable'):
+        print(f"⚠️ Provider does not have is_field_editable method")
+        return
+
+    fields = layer.fields()
+    config = layer.editFormConfig()
+
+    for field in fields:
+        field_name = field.name()
+        field_index = layer.fields().indexFromName(field_name)
+
+        # Ask provider if this field is editable
+        is_editable = provider.is_field_editable(field_name)
+
+        if not is_editable:
+            # Set as read-only in the edit form
+            config.setReadOnly(field_index, True)
+            print(f"  → Set '{field_name}' as READ-ONLY")
+
+    layer.setEditFormConfig(config)
