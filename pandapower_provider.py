@@ -133,7 +133,6 @@ class PandapowerProvider(QgsVectorDataProvider):
         self._save_in_progress = False  # Indicates whether a save operation is in progress
         self._save_thread = None  # QThread instance performing the save operation
 
-
         # Register a notification subscription with NetworkContainer.
         NetworkContainer.add_listener(self.uri, self)
 
