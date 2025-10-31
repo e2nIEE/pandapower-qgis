@@ -314,6 +314,9 @@ class PandapowerProvider(QgsVectorDataProvider):
             # Determine geometry type based on network type
             geometry_type = "Point" if self.network_type in ['bus', 'junction'] else "LineString"
 
+        # When fields are ready, set attribute form for addFeatrures dialog
+        self._setup_attribute_form()
+
         return self.fields_list
 
 
@@ -499,6 +502,7 @@ class PandapowerProvider(QgsVectorDataProvider):
             traceback.print_exc()
             return False
 
+
     def on_update_changed_network(self, network_data):
         """
         Handle network data updates from NetworkContainer notifications.
@@ -563,7 +567,9 @@ class PandapowerProvider(QgsVectorDataProvider):
                     if self.network_type == 'bus':
                         filtered_indices = df_network_type[df_network_type['vn_kv'] == self.vn_kv].index
                         df_network_type = df_network_type.loc[filtered_indices]
-                        df_res_network_type = df_res_network_type.loc[filtered_indices]
+                        # Only filter res for indices that exist
+                        available_res_indices = df_res_network_type.index.intersection(filtered_indices)
+                        df_res_network_type = df_res_network_type.loc[available_res_indices]
 
                 # Sort and merge
                 df_network_type.sort_index(inplace=True)
@@ -697,6 +703,7 @@ class PandapowerProvider(QgsVectorDataProvider):
 
     def update_geodata_in_json(self, auto_save=True):
         """
+        Currently not used.
         Synchronously update geodata changes in the original JSON file.
         Creates backup before modification and updates original file with current geometry data.
         Note: It is for synchronous update. For asynchronous update, see update_geodata_in_json_async()
@@ -773,6 +780,7 @@ class PandapowerProvider(QgsVectorDataProvider):
             import traceback
             traceback.print_exc()
             return False
+
 
     def changeAttributeValues(self, attr_map):
         """
@@ -1063,6 +1071,18 @@ class PandapowerProvider(QgsVectorDataProvider):
                             for col in current_df.columns:
                                 if col in original_df.columns:
                                     original_df.at[idx, col] = current_df.at[idx, col]
+                        else:
+                            # For newly added feature, add new row to original network
+                            new_row = current_df.loc[idx].to_frame().T
+                            # Concatenate new row to original dataframe
+                            updated_df = pd.concat([original_df, new_row], ignore_index=False)
+
+                            # Update the network object
+                            setattr(original_net, self.provider.network_type, updated_df)
+
+                            # Update local reference for next iteration
+                            original_df = getattr(original_net, self.provider.network_type)
+                            print(f"✅ Row {idx} added successfully")
 
                     # Save the updated network to JSON
                     try:
@@ -1093,6 +1113,576 @@ class PandapowerProvider(QgsVectorDataProvider):
         self._save_thread.start()
 
 
+    def addFeatures(self, features, flags=None):
+        """
+        Add new features to the pandapower network.
+        Validates feature data, creates corresponding pandapower elements,
+        and updates the NetworkContainer.
+
+        Note: This method follows the PyQGIS convention where C++ reference parameters
+            (marked with SIP_INOUT) are returned as part of a tuple in Python.
+        Args:
+            features: List of QgsFeature objects to add
+            flags: Optional flags (currently unused)
+        Returns:
+            tuple: (success, features) where:
+                - success (bool): True if features were successfully added, False otherwise
+                - features (list): The list of features with updated IDs and attributes
+        """
+        import traceback
+        print("=" * 80)
+        print(f"🔥 addFeatures() CALLED for {self.network_type}")
+        print(f"   _save_in_progress = {self._save_in_progress}")
+        print(f"   features count = {len(features)}")
+        print("   Call stack:")
+        for line in traceback.format_stack()[-5:-1]:
+            print(f"     {line.strip()}")
+        print("=" * 80)
+
+        # Setup attribute form if not done yet
+        #self._setup_attribute_form()
+
+        # Check if save operation is in progress
+        if self._save_in_progress:
+            from qgis.utils import iface
+            from qgis.core import Qgis
+            iface.messageBar().pushMessage(
+                "Notification",
+                "A save operation is in progress. Please try again later.",
+                level=Qgis.Warning,
+                duration=5
+            )
+            return (False, [])
+
+        try:
+            validation_errors = []
+            features_to_add = []
+
+            # Validate all features first
+            for feature in features:
+                # Validate each editable field
+                for field in self.fields():
+                    field_name = field.name()
+
+                    # Skip non-editable fields
+                    if not self.is_field_editable(field_name):
+                        continue
+
+                    value = feature.attribute(field_name)
+
+                    # Reuse validation logic from changeAttributeValues
+                    error = self._validate_field_value(field_name, value, "new_feature")
+                    if error:
+                        validation_errors.append(error)
+
+                if not validation_errors:
+                    features_to_add.append(feature)
+
+            # Show validation errors if any
+            if validation_errors:
+                from qgis.utils import iface
+                from qgis.core import Qgis
+                error_msg = "\n".join(validation_errors[:5])
+                if len(validation_errors) > 5:
+                    error_msg += f"\n... and {len(validation_errors) - 5} more errors"
+
+                iface.messageBar().pushMessage(
+                    "Validation Error",
+                    f"Cannot add features due to validation errors:\n{error_msg}",
+                    level=Qgis.Critical,
+                    duration=10
+                )
+                return (False, [])
+
+            # Add features to pandapower network
+            added_indices = []
+            for feature in features_to_add:
+                idx = self._add_feature_to_pandapower(feature)
+                if idx is not None:
+                    added_indices.append(idx)
+                    # Update feature ID to match pandapower index
+                    feature.setId(idx)
+                    # Update read-only field attributes with actual values
+                    # This ensures feature attributes match the actual data in self.net
+                    self._update_feature_readonly_attributes(feature, idx)
+
+            if not added_indices:
+                print("No features were added to pandapower network")
+                return (False, [])
+
+            # Update NetworkContainer to notify all listeners
+            NetworkContainer.register_network(self.uri, {'net': self.net, 'vn_kv': self.vn_kv,
+                                                         'type_layer_name': self.type_layer_name,
+                                                         'network_type': self.network_type,
+                                                         'current_crs': self.current_crs})
+
+            # Save to JSON file asynchronously
+            def on_save_complete(success, message, backup_path=None):
+                print(f"=" * 80)
+                print(f"🔥 on_save_complete() CALLED")
+                print(f"   success = {success}")
+                print(f"   message = {message}")
+                print(f"=" * 80)
+
+                self._save_in_progress = False
+
+                from qgis.core import Qgis
+                from qgis.utils import iface
+
+                if success:
+                    iface.messageBar().pushMessage(
+                        "Features Added",
+                        f"Added {len(added_indices)} feature(s) and saved to file",
+                        level=Qgis.Success,
+                        duration=5
+                    )
+
+                    # Trigger data change notification
+                    self.dataChanged.emit()
+                else:
+                    iface.messageBar().pushMessage(
+                        "Save Failed",
+                        f"Features added to memory but save failed: {message}",
+                        level=Qgis.Warning,
+                        duration=10
+                    )
+
+            # Direct after NetworkContainer update
+            print(f"=" * 80)
+            print(f"🔍 BEFORE SAVE:")
+            print(f"self.net.bus.index.tolist()[-5:] = {self.net.bus.index.tolist()[-5:]}")
+            print(f"Bus 320 in self.net.bus? {320 in self.net.bus.index}")
+            print(f"self.net is ? {id(self.net)}")
+            print(f"=" * 80)
+
+            # Async run
+            print(f"Calling update_attributes_in_json_async()...")
+            self.update_attributes_in_json_async(on_save_complete)
+            print(f"update_attributes_in_json_async() returned")
+
+            print(f"Added {len(added_indices)} features: {added_indices}")
+            print(f"Returning (True, features)")
+            return (True, features)
+
+        except Exception as e:
+            self.pushError(f"Failed to add features: {str(e)}")
+            self._save_in_progress = False  # Reset flag on error
+            import traceback
+            traceback.print_exc()
+            return (False, [])
+
+
+    def _update_feature_readonly_attributes(self, feature, idx):
+        """
+        Update read-only field attributes with actual values from pandapower network.
+
+        This is called after creating a new element in pandapower to ensure that:
+        1. Feature attributes match the actual data in self.net
+        2. Dialog DefaultValues (which are just hints) don't overwrite real data
+
+        Args:
+            feature: QgsFeature to update
+            idx: Index of the element in pandapower network
+        """
+        try:
+            # Get the actual row from pandapower network
+            df = getattr(self.net, self.network_type)
+            if idx not in df.index:
+                print(f"⚠️ Index {idx} not found in {self.network_type} dataframe")
+                return
+
+            row = df.loc[idx]
+
+            # Update read-only fields with actual values
+            updated_fields = []
+            for field in self.fields():
+                field_name = field.name()
+
+                # Only update read-only fields
+                if not self.is_field_editable(field_name):
+                    # Get actual value from pandapower network
+                    if field_name in row.index:
+                        value = row[field_name]
+                        field_idx = self.fields().indexOf(field_name)
+
+                        # Convert value if needed
+                        if pd.isna(value):
+                            value = None
+
+                        # Update feature attribute
+                        feature.setAttribute(field_idx, value)
+                        updated_fields.append(f"{field_name}={value}")
+
+            print(f"✅ Updated read-only attributes for feature {idx}: {', '.join(updated_fields)}")
+
+        except Exception as e:
+            print(f"⚠️ Error updating feature attributes for {idx}: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+
+    def _get_layer(self):
+        """
+        Get the QgsVectorLayer associated with this provider.
+        Returns None if layer is not yet created.
+        """
+        try:
+            layers = QgsProject.instance().mapLayersByName(self.type_layer_name)
+            if layers:
+                return layers[0]
+            return None
+        except Exception as e:
+            print(f"Error getting layer: {str(e)}")
+            return None
+
+
+    def _setup_attribute_form(self):
+        """
+        Configure the attribute form for Add Feature functionality.
+        Sets up field widgets, constraints, default values, and read-only status.
+
+        Key Feature: Displays actual values for read-only fields in Add Feature dialog
+        """
+        # Check if already setup
+        if hasattr(self, '_form_setup_done') and self._form_setup_done:
+            return
+
+        try:
+            from qgis.core import QgsEditFormConfig, QgsDefaultValue, QgsFieldConstraints, QgsEditorWidgetSetup
+
+            # Try to get layer from QgsProject
+            layer = self._get_layer()
+            if layer is None:
+                # Layer not yet available, will retry later
+                return
+            
+            # Set flag to avoid recursion
+            self._form_setup_done = True
+            
+            config = layer.editFormConfig()
+            #field_names = [f.name() for f in self.fields()]
+            field_names = [f.name() for f in self.fields_list]
+
+            # Configure each field
+            for field_name in field_names:
+                #field_idx = self.fields().indexOf(field_name)
+                field_idx = self.fields_list.indexOf(field_name)
+                if field_idx < 0:
+                    continue
+
+                # Configure read-only fields with default values
+                if not self.is_field_editable(field_name):
+                    # Set as read-only
+                    config.setReadOnly(field_idx, True)
+
+                    # Get default value for this field
+                    default_value = self._get_default_value_for_form(field_name)
+                    if default_value is not None:
+                        # Create Expression for QgsDefaultValue
+                        if isinstance(default_value, (int, float)):
+                            # Numeric values don't need quotes
+                            default_expr = str(default_value)
+                        else:
+                            # String values need single quotes in expression
+                            default_expr = f"'{default_value}'"
+
+                        # Set default value definition
+                        layer.setDefaultValueDefinition(
+                            field_idx,
+                            QgsDefaultValue(default_expr, applyOnUpdate=False)
+                        )
+                        print(f"✅ Set default value for '{field_name}': {default_expr}")
+
+                # Configure editable fields (widgets & constraints)
+                else:
+                    # Configure widget type
+                    if field_name == 'in_service':
+                        # Boolean fields → CheckBox
+                        layer.setEditorWidgetSetup(field_idx, QgsEditorWidgetSetup('CheckBox', {}))
+
+                    elif field_name in ['from_bus', 'to_bus', 'from_junction', 'to_junction']:
+                        # Bus/Junction references → TextEdit (numeric input)
+                        layer.setEditorWidgetSetup(field_idx, QgsEditorWidgetSetup('TextEdit', {}))
+
+                    elif field_name == 'type' and self.network_type == 'bus':
+                        # Type field → ValueMap (dropdown)
+                        widget_config = {
+                            'map': {
+                                'b - busbar': 'b',
+                                'n - node': 'n',
+                                'm - muff': 'm'
+                            }
+                        }
+                        layer.setEditorWidgetSetup(field_idx, QgsEditorWidgetSetup('ValueMap', widget_config))
+
+                    else:
+                        # Default: TextEdit for most fields
+                        layer.setEditorWidgetSetup(field_idx, QgsEditorWidgetSetup('TextEdit', {}))
+
+                    # Configure constraints
+                    # Define required fields for this network type
+                    required_map = {
+                        'bus': ['name', 'vn_kv'],
+                        'line': ['from_bus', 'to_bus', 'length_km', 'std_type'],
+                        # junction and pipe excluded as per requirements
+                    }
+                    required_fields = required_map.get(self.network_type, [])
+
+                    # Set NotNull constraint for required fields
+                    if field_name in required_fields:
+                        field_constraints = layer.fields()[field_idx].constraints()
+                        field_constraints.setConstraint(QgsFieldConstraints.ConstraintNotNull)
+                        field_constraints.setConstraintStrength(
+                            QgsFieldConstraints.ConstraintNotNull,
+                            QgsFieldConstraints.ConstraintStrengthHard
+                        )
+
+                    # Expression constraints for physical parameters
+                    if field_name in ['length_km', 'r_ohm_per_km', 'x_ohm_per_km', 'c_nf_per_km',
+                                      'max_i_ka', 'diameter_m', 'g_us_per_km']:
+                        field_constraints = layer.fields()[field_idx].constraints()
+                        field_constraints.setConstraintExpression(
+                            f'"{field_name}" > 0',
+                            f"{field_name} must be positive"
+                        )
+
+                    # Parallel count must be at least 1
+                    if field_name == 'parallel':
+                        field_constraints = layer.fields()[field_idx].constraints()
+                        field_constraints.setConstraintExpression(
+                            f'"{field_name}" >= 1',
+                            "parallel must be at least 1"
+                        )
+
+            # Apply configuration
+            layer.setEditFormConfig(config)
+
+            # 🔷 3. Set Table View as default (not Form View)
+            from qgis.core import QgsAttributeTableConfig
+            table_config = layer.attributeTableConfig()
+            table_config.setActionWidgetStyle(QgsAttributeTableConfig.ButtonList)
+            table_config.update(layer.fields())
+            layer.setAttributeTableConfig(table_config)
+
+            print(f"✅ Attribute form configured for {self.network_type}")
+
+        except Exception as e:
+            self._form_setup_done = False
+            print(f"Error setting up attribute form: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+
+    def _get_default_value_for_form(self, field_name):
+        """
+        Get default value to display for read-only fields in the Add Feature form.
+        Returns actual values that will be used when creating the feature.
+        Args:
+            field_name: Name of the field
+        Returns:
+            Default value to display in the form dialog (string, int, float, or None)
+        """
+        if field_name == 'pp_type':
+            # Return actual network type
+            return self.network_type
+
+        elif field_name == 'pp_index':
+            # Show next available index (recalculated each time dialog opens)
+            next_idx = self._get_next_index()
+            return int(next_idx)
+
+        elif field_name == 'vn_kv' and self.network_type in ['bus', 'line']:
+            # Return actual voltage level from layer
+            return float(self.vn_kv)
+
+        elif field_name == 'pn_bar' and self.network_type in ['junction', 'pipe']:
+            # Return actual pressure level from layer
+            return float(self.pn_bar)
+
+        elif field_name == 'geo':
+            # Geometry is auto-generated from click position
+            return "(auto-generated)"
+
+        # Other read-only fields - res columns
+        #return None
+        return "(needs runpp)"
+
+
+    def _get_next_index(self):
+        """
+        Calculate the next available index for a new feature in pandapower network.
+        Returns:
+            int: Next available index (max + 1, or 0 if empty)
+        """
+        df = getattr(self.net, self.network_type)
+        if df.empty:
+            return 0
+        return int(df.index.max() + 1)
+
+
+    def _add_empty_res_row(self, idx):
+        """
+        Add empty result row for newly created element.
+        Creates a row with NaN values in the corresponding res_* DataFrame
+        so that the element can be safely merged even before running power flow.
+        Args:
+            idx: Index of the newly created element in pandapower network
+        Returns:
+            bool: True if row was successfully added, False otherwise
+        """
+        try:
+            res_table_name = f'res_{self.network_type}'
+
+            # Check if res table exists
+            if not hasattr(self.net, res_table_name):
+                print(f"Warning: {res_table_name} does not exist in network")
+                return False
+
+            res_df = getattr(self.net, res_table_name)
+
+            # Check if res_df is None (shouldn't happen with pandapower, but defensive)
+            if res_df is None:
+                print(f"Warning: {res_table_name} is None (unexpected)")
+                return False
+
+            # Check if res_df has columns (structure exists)
+            if len(res_df.columns) == 0:
+                print(f"Warning: {res_table_name} has no columns")
+                return False
+
+            # Check if row already exists (safety check)
+            if idx in res_df.index:
+                print(f"Info: {res_table_name}[{idx}] already exists, skipping")
+                return True
+
+            # Create empty row with all columns as NaN
+            # dtype=float ensures all values are NaN (float type)
+            new_row = pd.Series(index=res_df.columns, name=idx, dtype=float)
+
+            # Add row to res dataframe using concat
+            # ignore_index=False preserves the index (idx)
+            updated_res = pd.concat([res_df, new_row.to_frame().T], ignore_index=False)
+
+            # Update the network's res dataframe
+            setattr(self.net, res_table_name, updated_res)
+
+            print(f"✅ Added empty {res_table_name} row for index {idx}")
+            return True
+
+        except Exception as e:
+            print(f"❌ Error adding empty res row for {self.network_type}[{idx}]: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+
+    def _add_feature_to_pandapower(self, feature):
+        """
+        Add a single feature to the pandapower network.
+        Extracts attributes from QgsFeature and creates corresponding pandapower element.
+        Args:
+            feature: QgsFeature to add
+        Returns:
+            int or None: Index of created element in pandapower network, or None if failed
+        """
+        try:
+            import pandapower as pp
+
+            # Extract geometry
+            geometry = feature.geometry()
+
+            # Prepare attributes dictionary (only editable fields)
+            attributes = {}
+            for field in self.fields():
+                field_name = field.name()
+                if self.is_field_editable(field_name):
+                    value = feature.attribute(field_name)
+                    # Skip None/NULL values - let pandapower use defaults
+                    if value is not None and not pd.isna(value):
+                        attributes[field_name] = value
+
+            # Create element based on network type
+            if self.network_type == 'bus':
+                # Create bus
+                # Required: name, vn_kv
+                # Get vn_kv from layer (not from user input)
+                name = attributes.get('name', f'Bus_{self._get_next_index()}')
+
+                # Create bus with required parameters
+                idx = pp.create_bus(
+                    self.net,
+                    name=name,
+                    vn_kv=self.vn_kv,  # Use layer's voltage level
+                    type=attributes.get('type', 'b'),
+                    in_service=attributes.get('in_service', True)
+                )
+
+                # Add empty res row immediately
+                self._add_empty_res_row(idx)
+
+                # Add geometry to geo column
+                if not geometry.isNull():
+                    point = geometry.asPoint()
+                    geo_json = json.dumps({
+                        'type': 'Point',
+                        'coordinates': [point.x(), point.y()]
+                    })
+                    self.net.bus.at[idx, 'geo'] = geo_json
+
+                print(f"Created bus {idx}: {name} at {self.vn_kv} kV")
+                return idx
+
+            elif self.network_type == 'line':
+                # Create line
+                # Required: from_bus, to_bus, length_km, std_type
+                from_bus = attributes.get('from_bus')
+                to_bus = attributes.get('to_bus')
+                length_km = attributes.get('length_km')
+                std_type = attributes.get('std_type')
+
+                if from_bus is None or to_bus is None or length_km is None or std_type is None:
+                    self.pushError("Missing required fields for line: from_bus, to_bus, length_km, std_type")
+                    return None
+
+                # Create line with required parameters
+                idx = pp.create_line(
+                    self.net,
+                    from_bus=int(from_bus),
+                    to_bus=int(to_bus),
+                    length_km=float(length_km),
+                    std_type=std_type,
+                    name=attributes.get('name', f'Line_{self._get_next_index()}'),
+                    in_service=attributes.get('in_service', True),
+                    parallel=attributes.get('parallel', 1)
+                )
+
+                # Add empty res row immediately
+                self._add_empty_res_row(idx)
+
+                # Add geometry to geo column
+                if not geometry.isNull():
+                    line_geom = geometry.asPolyline()
+                    coords = [[point.x(), point.y()] for point in line_geom]
+                    geo_json = json.dumps({
+                        'type': 'LineString',
+                        'coordinates': coords
+                    })
+                    self.net.line.at[idx, 'geo'] = geo_json
+
+                print(f"Created line {idx}: {from_bus} -> {to_bus}, {length_km} km")
+                return idx
+
+            else:
+                self.pushError(f"Unsupported network type for addFeatures: {self.network_type}")
+                return None
+
+        except Exception as e:
+            self.pushError(f"Error adding feature to pandapower: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+
     def capabilities(self) -> QgsVectorDataProvider.Capabilities:
         """
         Return the capabilities supported by this data provider.
@@ -1103,7 +1693,8 @@ class PandapowerProvider(QgsVectorDataProvider):
             QgsVectorDataProvider.CreateSpatialIndex |
             QgsVectorDataProvider.SelectAtId |
             QgsVectorDataProvider.ChangeGeometries |
-            QgsVectorDataProvider.ChangeAttributeValues
+            QgsVectorDataProvider.ChangeAttributeValues |
+            QgsVectorDataProvider.AddFeatures
         )
 
 
@@ -1231,7 +1822,9 @@ class PandapowerProvider(QgsVectorDataProvider):
             int: Number of features, 0 if error occurred
         """
         try:
-            return len(self.df)
+            if self.df is not None:
+                return len(self.df)
+            return 0
         except Exception as e:
             self.pushError(f"Failed to count features: {str(e)}")
             return 0

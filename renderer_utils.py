@@ -6,6 +6,7 @@ from qgis.core import QgsProject, QgsVectorLayer, QgsApplication, \
 RED_COLOR = "#ff0000"
 GREEN_COLOR = "#00cc44"
 BLUE_COLOR = "#0000ff"
+GRAY_COLOR = "#999999"
 
 
 def create_power_renderer():
@@ -16,6 +17,15 @@ def create_power_renderer():
     # Create a rule-based renderer for the bus layer
     bus_renderer = QgsRuleBasedRenderer(QgsMarkerSymbol())
     bus_root_rule = bus_renderer.rootRule()
+
+    # Bus rule 0: vm_pu IS NULL (gray) - for newly added features
+    bus_rule_gray = QgsRuleBasedRenderer.Rule(QgsMarkerSymbol())
+    bus_rule_gray.setFilterExpression('"vm_pu" IS NULL')
+    bus_rule_gray.setLabel('Not calculated')
+    bus_symbol_gray = QgsMarkerSymbol()
+    bus_symbol_gray.setColor(QColor(GRAY_COLOR))
+    bus_rule_gray.setSymbol(bus_symbol_gray)
+    bus_root_rule.appendChild(bus_rule_gray)
 
     # Bus rule 1: vm_pu > 1.1 (red)
     bus_rule_red = bus_root_rule.children()[0].clone()\
@@ -45,9 +55,20 @@ def create_power_renderer():
     bus_rule_blue.setSymbol(bus_symbol_blue)
     bus_root_rule.appendChild(bus_rule_blue)
 
+
     # Create a rule-based renderer for the line layer
     line_renderer = QgsRuleBasedRenderer(QgsLineSymbol())
     line_root_rule = line_renderer.rootRule()
+
+    # Line rule 0: loading_percent IS NULL (gray) - for newly added features
+    line_rule_gray = QgsRuleBasedRenderer.Rule(QgsLineSymbol())
+    line_rule_gray.setFilterExpression('"loading_percent" IS NULL')
+    line_rule_gray.setLabel('Not calculated')
+    line_symbol_gray = QgsLineSymbol()
+    line_symbol_gray.setColor(QColor(GRAY_COLOR))
+    line_symbol_gray.setWidth(0.6)
+    line_rule_gray.setSymbol(line_symbol_gray)
+    line_root_rule.appendChild(line_rule_gray)
 
     # Line rule 1: loading_percent > 100 (red)
     line_rule_red = QgsRuleBasedRenderer.Rule(QgsLineSymbol())
