@@ -245,7 +245,7 @@ class PandapowerProvider(QgsVectorDataProvider):
 
                 # Merge data
                 self.df = pd.merge(df_network_type, df_res_network_type, left_index=True,
-                    right_index=True, suffixes=('', '_res'))
+                    right_index=True, how='left', suffixes=('', '_res'))
 
             # when res column of json file is empty
             else:
@@ -575,7 +575,7 @@ class PandapowerProvider(QgsVectorDataProvider):
                 df_network_type.sort_index(inplace=True)
                 df_res_network_type.sort_index(inplace=True)
                 new_df = pd.merge(df_network_type, df_res_network_type,
-                                  left_index=True, right_index=True, suffixes=('', '_res'))
+                                  left_index=True, right_index=True, how='left', suffixes=('', '_res'))
             else:
                 print("⚠️ No calculation results! Using new method")
                 new_df = df_network_type.copy()
@@ -1060,8 +1060,29 @@ class PandapowerProvider(QgsVectorDataProvider):
                     # Modified data currently in memory
                     current_df = getattr(self.provider.net, self.provider.network_type)
 
+                    print("=" * 80)
+                    print("🔍 DEBUG: SaveThread START")
+                    print(f"self.provider.network_type: {self.provider.network_type}")
+                    print(f"current_df.shape: {current_df.shape}")
+                    print(f"current_df.index (first 10): {current_df.index[:10].tolist()}")
+                    print(f"current_df.index (last 5): {current_df.index[-5:].tolist()}")
+                    print(f"current_df.columns: {current_df.columns.tolist()}")
+                    print("=" * 80)
+
                     # Update the original network's data with modified attributes
                     original_df = getattr(original_net, self.provider.network_type)
+
+                    print("=" * 80)
+                    print("🔍 DEBUG: Original network loaded")
+                    print(f"original_df.shape: {original_df.shape}")
+                    print(f"original_df.index (first 10): {original_df.index[:10].tolist()}")
+                    print(f"original_df.index (last 5): {original_df.index[-5:].tolist()}")
+                    print("=" * 80)
+                    updated_count = 0 #debug
+                    new_count = 0 #debug
+
+                    # ✨✨✨ 추가: 새로운 rows를 모을 리스트 초기화
+                    new_rows = []
 
                     # Copy modified rows to original network
                     # Only update rows that exist in current_df (filtered by vn_kv)
@@ -1071,18 +1092,43 @@ class PandapowerProvider(QgsVectorDataProvider):
                             for col in current_df.columns:
                                 if col in original_df.columns:
                                     original_df.at[idx, col] = current_df.at[idx, col]
+                            updated_count += 1 # debug
+                        # else:
+                        #     # For newly added feature, add new row to original network
+                        #     new_row = current_df.loc[idx].to_frame().T
+                        #     # Concatenate new row to original dataframe
+                        #     updated_df = pd.concat([original_df, new_row], ignore_index=False)
+                        #
+                        #     # Update the network object
+                        #     setattr(original_net, self.provider.network_type, updated_df)
+                        #
+                        #     # Update local reference for next iteration
+                        #     original_df = getattr(original_net, self.provider.network_type)
+                        #     print(f"✅ Row {idx} added successfully")
+                        #     new_count += 1 # debug
+                        # ✨✨✨ 추가: 새 row를 리스트에 수집만 함
                         else:
-                            # For newly added feature, add new row to original network
-                            new_row = current_df.loc[idx].to_frame().T
-                            # Concatenate new row to original dataframe
-                            updated_df = pd.concat([original_df, new_row], ignore_index=False)
+                            new_rows.append(current_df.loc[idx])
+                            new_count += 1  # debug
 
-                            # Update the network object
-                            setattr(original_net, self.provider.network_type, updated_df)
+                    # ✨✨✨ 추가: for 루프 종료 후, 한번에 concat 수행
+                    if new_rows:
+                        new_df = pd.DataFrame(new_rows)
+                        updated_df = pd.concat([original_df, new_df], ignore_index=False)
+                        setattr(original_net, self.provider.network_type, updated_df)
+                        # 로컬 변수도 업데이트 (라인 1111-1113에서 사용하기 때문)
+                        original_df = getattr(original_net, self.provider.network_type)
+                        print(f"✅ Added {len(new_rows)} new rows in single operation")
 
-                            # Update local reference for next iteration
-                            original_df = getattr(original_net, self.provider.network_type)
-                            print(f"✅ Row {idx} added successfully")
+
+                    print("=" * 80)
+                    print("🔍 DEBUG: SaveThread processing complete")
+                    print(f"Updated {updated_count} existing rows")
+                    print(f"Added {new_count} new rows")
+                    print(f"original_df.shape after processing: {original_df.shape}")
+                    print(f"original_df.index (first 10): {original_df.index[:10].tolist()}")
+                    print(f"original_df.index (last 5): {original_df.index[-5:].tolist()}")
+                    print("=" * 80)
 
                     # Save the updated network to JSON
                     try:
@@ -1154,6 +1200,11 @@ class PandapowerProvider(QgsVectorDataProvider):
             )
             return (False, [])
 
+        # 🛡️ NEW: Pre-validation - Check if file can be saved BEFORE processing
+        if not self._validate_can_save():
+            print("❌ addFeatures aborted: Pre-validation failed")
+            return (False, [])  # QGIS will keep features in buffer (no commit)
+
         try:
             validation_errors = []
             features_to_add = []
@@ -1196,6 +1247,8 @@ class PandapowerProvider(QgsVectorDataProvider):
 
             # Add features to pandapower network
             added_indices = []
+            added_features = []
+
             for feature in features_to_add:
                 idx = self._add_feature_to_pandapower(feature)
                 if idx is not None:
@@ -1205,24 +1258,83 @@ class PandapowerProvider(QgsVectorDataProvider):
                     # Update read-only field attributes with actual values
                     # This ensures feature attributes match the actual data in self.net
                     self._update_feature_readonly_attributes(feature, idx)
+                    added_features.append(feature)
 
             if not added_indices:
                 print("No features were added to pandapower network")
                 return (False, [])
 
-            # Update NetworkContainer to notify all listeners
-            NetworkContainer.register_network(self.uri, {'net': self.net, 'vn_kv': self.vn_kv,
-                                                         'type_layer_name': self.type_layer_name,
-                                                         'network_type': self.network_type,
-                                                         'current_crs': self.current_crs})
+            # 🔥🔥🔥 수정: 새 row만 self.df에 추가
+            print("=" * 80)
+            print("🔄 Adding new rows to self.df...")
+            print(f"BEFORE: self.df.shape = {self.df.shape}, index = {self.df.index.tolist()}")
+
+            # net.bus와 net.res_bus에서 해당 row 가져오기
+            df_network_type = getattr(self.net, self.network_type)
+            df_res_network_type = getattr(self.net, f'res_{self.network_type}')
+            # 🎯 NEW: 새 rows를 리스트에 모으기
+            new_rows = []
+
+            # 각 새 feature를 self.df에 추가
+            for idx in added_indices:
+                # 새 row 구성
+                bus_row = df_network_type.loc[idx]
+
+                # res가 있으면 merge
+                if idx in df_res_network_type.index:
+                    res_row = df_res_network_type.loc[idx]
+                    # 두 Series를 합치기
+                    new_row = pd.concat([bus_row, res_row])
+                else:
+                    new_row = bus_row
+                    # res 컬럼들을 None으로 추가
+                    for col in df_res_network_type.columns:
+                        new_row[col] = None
+
+                # pp_type, pp_index 추가
+                new_row_dict = new_row.to_dict()
+                new_row_dict['pp_type'] = self.network_type
+                new_row_dict['pp_index'] = idx
+
+                # 🎯 NEW: 리스트에 append (DataFrame 생성은 나중에)
+                new_rows.append(new_row_dict)
+                # # DataFrame에 추가
+                # new_row_df = pd.DataFrame([new_row_dict], index=[idx])
+                # self.df = pd.concat([self.df, new_row_df], ignore_index=False)
+
+                print(f"✅ Prepared row {idx} for adding to self.df")
+
+            # 🎯🔥 NEW: 한번에 concat (O(n*m) → O(n+m) 성능 개선)
+            if new_rows:
+                new_df = pd.DataFrame(new_rows, index=added_indices)
+                self.df = pd.concat([self.df, new_df], ignore_index=False)
+                print(f"✅ Added {len(new_rows)} rows to self.df in single concat operation")
+
+            print(f"AFTER: self.df.shape = {self.df.shape}")
+            print(f"self.df.index: {self.df.index.tolist()}")
+            print("=" * 80)
+
+            # # Update NetworkContainer to notify all listeners
+            # NetworkContainer.register_network(self.uri, {'net': self.net, 'vn_kv': self.vn_kv,
+            #                                              'type_layer_name': self.type_layer_name,
+            #                                              'network_type': self.network_type,
+            #                                              'current_crs': self.current_crs})
 
             # Save to JSON file asynchronously
             def on_save_complete(success, message, backup_path=None):
-                print(f"=" * 80)
-                print(f"🔥 on_save_complete() CALLED")
-                print(f"   success = {success}")
-                print(f"   message = {message}")
-                print(f"=" * 80)
+                print("=" * 80)
+                print("🔍 DEBUG: on_save_complete() START")
+                print(f"success: {success}")
+                print(f"message: {message}")
+                print(f"self.net.bus.shape: {self.net.bus.shape}")
+                print(f"self.net.bus.index (first 10): {self.net.bus.index[:10].tolist()}")
+                print(f"self.net.bus.index (last 5): {self.net.bus.index[-5:].tolist()}")
+                print(f"self.df.shape: {self.df.shape}")
+                print(
+                    f"self.df.index (first 10): {self.df.index[:10].tolist() if len(self.df) >= 10 else self.df.index.tolist()}")
+                print(
+                    f"self.df.index (last 5): {self.df.index[-5:].tolist() if len(self.df) >= 5 else self.df.index.tolist()}")
+                print("=" * 80)
 
                 self._save_in_progress = False
 
@@ -1237,15 +1349,68 @@ class PandapowerProvider(QgsVectorDataProvider):
                         duration=5
                     )
 
+                    print("=" * 80)
+                    print("🔍 DEBUG: BEFORE dataChanged.emit()")
+                    print(f"self.net.bus.shape: {self.net.bus.shape}")
+                    print(f"self.net.bus.index[:10]: {self.net.bus.index[:10].tolist()}")
+                    print(f"self.net.bus.index[-5:]: {self.net.bus.index[-5:].tolist()}")
+                    print(f"self.df.shape: {self.df.shape}")
+                    print(
+                        f"self.df.index[:10]: {self.df.index[:10].tolist() if len(self.df) >= 10 else self.df.index.tolist()}")
+                    print(
+                        f"self.df.index[-5:]: {self.df.index[-5:].tolist() if len(self.df) >= 5 else self.df.index.tolist()}")
+                    print("=" * 80)
+
+                    # 💾✅ NEW: 저장 성공 후 NetworkContainer 업데이트 (changeGeometry/AttributeValues 패턴)
+                    network_data = {
+                        'net': self.net,
+                        'vn_kv': self.vn_kv,
+                        'type_layer_name': self.type_layer_name,
+                        'network_type': self.network_type,
+                        'current_crs': self.current_crs
+                    }
+                    NetworkContainer.register_network(self.uri, network_data)
+                    print("✅ NetworkContainer updated after successful save")
+
                     # Trigger data change notification
                     self.dataChanged.emit()
+
+                    print("=" * 80)
+                    print("🔍 DEBUG: AFTER dataChanged.emit()")
+                    print(f"self.net.bus.shape: {self.net.bus.shape}")
+                    print(f"self.net.bus.index[:10]: {self.net.bus.index[:10].tolist()}")
+                    print(f"self.net.bus.index[-5:]: {self.net.bus.index[-5:].tolist()}")
+                    print(f"self.df.shape: {self.df.shape}")
+                    print(
+                        f"self.df.index[:10]: {self.df.index[:10].tolist() if len(self.df) >= 10 else self.df.index.tolist()}")
+                    print(
+                        f"self.df.index[-5:]: {self.df.index[-5:].tolist() if len(self.df) >= 5 else self.df.index.tolist()}")
+                    print("=" * 80)
                 else:
                     iface.messageBar().pushMessage(
-                        "Save Failed",
-                        f"Features added to memory but save failed: {message}",
-                        level=Qgis.Warning,
-                        duration=10
+                        "⚠️ Save Failed - Features added to memory but NOT Saved to File",
+                        f"Features: {added_indices} Reason: {message}\n",
+                        level=Qgis.Critical,
+                        duration=0
                     )
+
+                    # 📋 Detailed log for debugging
+                    print("=" * 80)
+                    print("❌ SAVE FAILED - FEATURES NOT IN FILE")
+                    print(f"Features in memory only: {added_indices}")
+                    print(f"Reason: {message}")
+                    print(f"File: {self.uri_parts.get('path', 'unknown')}")
+                    print("=" * 80)
+                    print("⚠️ USER ACTION REQUIRED:")
+                    print("  1. Fix the issue (close programs, check permissions)")
+                    print("  2. Save again (Ctrl+S)")
+                    print("  3. Or Undo (Ctrl+Z) to remove features")
+                    print("⚠️ Features will disappear on QGIS restart if not saved!")
+                    print("=" * 80)
+                    # 💾❌ NEW: 저장 실패 시 NetworkContainer 업데이트 안 함 (디버깅 로그)
+
+                    print("⚠️ NetworkContainer NOT updated due to save failure")
+                    print(f"⚠️ Feature {added_indices} exists in memory but not in file or NetworkContainer")
 
             # Direct after NetworkContainer update
             print(f"=" * 80)
@@ -1358,7 +1523,7 @@ class PandapowerProvider(QgsVectorDataProvider):
             
             # Set flag to avoid recursion
             self._form_setup_done = True
-            
+
             config = layer.editFormConfig()
             #field_names = [f.name() for f in self.fields()]
             field_names = [f.name() for f in self.fields_list]
@@ -1511,6 +1676,7 @@ class PandapowerProvider(QgsVectorDataProvider):
     def _get_next_index(self):
         """
         Calculate the next available index for a new feature in pandapower network.
+        Note: Not actual pp index, only to display user hint
         Returns:
             int: Next available index (max + 1, or 0 if empty)
         """
@@ -1606,16 +1772,47 @@ class PandapowerProvider(QgsVectorDataProvider):
                 # Create bus
                 # Required: name, vn_kv
                 # Get vn_kv from layer (not from user input)
-                name = attributes.get('name', f'Bus_{self._get_next_index()}')
+                # name = attributes.get('name', f'Bus_{self._get_next_index()}')
+                name = attributes.pop('name', f'Bus_{self._get_next_index()}')
+                type_val = attributes.pop('type', 'b')
+                in_service = attributes.pop('in_service', True)
+                # In attributes remains now kwargs
+
+
+                # 🔍 디버깅: create_bus 호출 전
+                print("=" * 80)
+                print("🔍 DEBUG: BEFORE pp.create_bus()")
+                print(f"self.net.bus.shape: {self.net.bus.shape}")
+                print(f"self.net.bus.columns: {self.net.bus.columns.tolist()}")
+                print(f"self.net.bus.index (first 10): {self.net.bus.index[:10].tolist()}")
+                print(f"self.net.bus.index (last 5): {self.net.bus.index[-5:].tolist()}")
+                print(f"self.net.bus DataFrame id: {id(self.net.bus)}")
+                print(f"kwargs to pass: {attributes}")
+                print("=" * 80)
+
 
                 # Create bus with required parameters
                 idx = pp.create_bus(
                     self.net,
                     name=name,
                     vn_kv=self.vn_kv,  # Use layer's voltage level
-                    type=attributes.get('type', 'b'),
-                    in_service=attributes.get('in_service', True)
+                    type=type_val,
+                    in_service=in_service,
+                    **attributes    # oder *?
                 )
+
+                # 🔍 디버깅: create_bus 호출 후
+                print("=" * 80)
+                print("🔍 DEBUG: AFTER pp.create_bus()")
+                print(f"Created bus index: {idx}")
+                print(f"self.net.bus.shape: {self.net.bus.shape}")
+                print(f"self.net.bus.columns: {self.net.bus.columns.tolist()}")
+                print(f"self.net.bus.index (first 10): {self.net.bus.index[:10].tolist()}")
+                print(f"self.net.bus.index (last 5): {self.net.bus.index[-5:].tolist()}")
+                print(f"self.net.bus DataFrame id: {id(self.net.bus)}")
+                print(f"Bus {idx} data:")
+                print(self.net.bus.loc[idx])
+                print("=" * 80)
 
                 # Add empty res row immediately
                 self._add_empty_res_row(idx)
@@ -1635,14 +1832,22 @@ class PandapowerProvider(QgsVectorDataProvider):
             elif self.network_type == 'line':
                 # Create line
                 # Required: from_bus, to_bus, length_km, std_type
-                from_bus = attributes.get('from_bus')
-                to_bus = attributes.get('to_bus')
-                length_km = attributes.get('length_km')
-                std_type = attributes.get('std_type')
+                # from_bus = attributes.get('from_bus')
+                # to_bus = attributes.get('to_bus')
+                # length_km = attributes.get('length_km')
+                # std_type = attributes.get('std_type')
+                from_bus = attributes.pop('from_bus', None)
+                to_bus = attributes.pop('to_bus', None)
+                length_km = attributes.pop('length_km', None)
+                std_type = attributes.pop('std_type', None)
 
                 if from_bus is None or to_bus is None or length_km is None or std_type is None:
                     self.pushError("Missing required fields for line: from_bus, to_bus, length_km, std_type")
                     return None
+
+                name = attributes.pop('name', f'Line_{self._get_next_index()}')
+                in_service = attributes.pop('in_service', True)
+                parallel = attributes.pop('parallel', 1)
 
                 # Create line with required parameters
                 idx = pp.create_line(
@@ -1651,9 +1856,10 @@ class PandapowerProvider(QgsVectorDataProvider):
                     to_bus=int(to_bus),
                     length_km=float(length_km),
                     std_type=std_type,
-                    name=attributes.get('name', f'Line_{self._get_next_index()}'),
-                    in_service=attributes.get('in_service', True),
-                    parallel=attributes.get('parallel', 1)
+                    name=name,
+                    in_service=in_service,
+                    parallel=parallel,
+                    **attributes
                 )
 
                 # Add empty res row immediately
@@ -1681,6 +1887,77 @@ class PandapowerProvider(QgsVectorDataProvider):
             import traceback
             traceback.print_exc()
             return None
+
+
+    def _validate_can_save(self):
+        """
+        🛡️ PRE-VALIDATION: Validate that file can be saved before processing features.
+        Checks file existence, write permissions, and file lock status.
+        Shows user-friendly error messages if validation fails.
+
+        Returns:
+            bool: True if safe to proceed with save, False if save will fail
+        """
+        from qgis.core import Qgis
+        from qgis.utils import iface
+        import os
+
+        json_path = self.uri_parts.get('path', '')
+
+        # 🛡️ Check 1: File exists
+        if not json_path or not os.path.exists(json_path):
+            iface.messageBar().pushMessage(
+                "❌ Cannot Save",
+                f"File not found: {json_path}\n"
+                f"The file may have been moved or deleted.",
+                level=Qgis.Critical,
+                duration=0
+            )
+            print(f"❌ Pre-validation failed: File not found - {json_path}")
+            return False
+
+        # 🛡️ Check 2: Write permission
+        if not os.access(json_path, os.W_OK):
+            iface.messageBar().pushMessage(
+                "❌ Cannot Save",
+                f"No write permission: {json_path}\n"
+                f"Check file properties (read-only?) or contact administrator.",
+                level=Qgis.Critical,
+                duration=0
+            )
+            print(f"❌ Pre-validation failed: No write permission - {json_path}")
+            return False
+
+        # 🛡️ Check 3: File not locked (by other program)
+        try:
+            # Try to open in read-write mode (doesn't actually modify)
+            with open(json_path, 'r+') as f:
+                pass
+        except PermissionError:
+            iface.messageBar().pushMessage(
+                "❌ Cannot Save",
+                f"File is locked: {json_path}\n"
+                f"Close any programs using this file (Excel, text editor, etc.)",
+                level=Qgis.Critical,
+                duration=0
+            )
+            print(f"❌ Pre-validation failed: File is locked - {json_path}")
+            return False
+        except Exception as e:
+            # Unexpected error during file check
+            iface.messageBar().pushMessage(
+                "❌ Cannot Save",
+                f"Cannot access file: {json_path}\n"
+                f"Error: {str(e)}",
+                level=Qgis.Critical,
+                duration=0
+            )
+            print(f"❌ Pre-validation failed: Unexpected error - {str(e)}")
+            return False
+
+        # ✅ All checks passed
+        print(f"✅ Pre-validation passed: {json_path}")
+        return True
 
 
     def capabilities(self) -> QgsVectorDataProvider.Capabilities:

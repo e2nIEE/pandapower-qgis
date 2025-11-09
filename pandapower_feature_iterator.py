@@ -128,9 +128,6 @@ class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
                                 f"Warning: Empty coordinates in geo data for {self._provider.network_type} index {idx}")
                     else:
                         # Case 2: no line geo data (SimBench format) - auto-generate straight line
-                        print(
-                            f"Info: No geo data for {self._provider.network_type} index {idx}, generating straight line from bus coordinates")
-
                         # Determine the bus column names based on network type
                         if self._provider.network_type == 'line':
                             from_node = 'from_bus'
