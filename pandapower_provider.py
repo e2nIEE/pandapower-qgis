@@ -89,9 +89,6 @@ class PandapowerProvider(QgsVectorDataProvider):
 
         # Bring network data from container
         network_data = NetworkContainer.get_network(uri)
-        # if network_data is None:
-        #     self._is_valid = False
-        #     return
 
         # If container is empty (e.g., after project reload), load from file
         if network_data is None:
@@ -930,7 +927,7 @@ class PandapowerProvider(QgsVectorDataProvider):
         """
         # 1. Check for NULL in required fields (for line/pipe)
         if self.network_type in ['line', 'pipe']:
-            required_fields = ['from_bus', 'to_bus'] if self.network_type == 'line' else ['from_junction', 'to_junction']
+            required_fields = ['from_bus', 'to_bus', 'length_km'] if self.network_type == 'line' else ['from_junction', 'to_junction']
 
             if field_name in required_fields:
                 # Check for None, NaN, or string "NULL"
@@ -963,6 +960,44 @@ class PandapowerProvider(QgsVectorDataProvider):
             if field_name == 'parallel':
                 if new_value is not None and not pd.isna(new_value) and new_value < 1:
                     return f"❌ parallel must be at least 1 (feature {feature_id}): {new_value}"
+
+        # std_type에 대한 더 철저한 validation이 필요할 경우 사용
+        # if self.network_type == 'line' and field_name == 'std_type':
+        #     if new_value is not None and not pd.isna(new_value) and new_value != '':
+        #         if new_value not in self.net.std_types['line']:
+        #             available = list(self.net.std_types['line'].keys())[:5]
+        #             return f"❌ Invalid std_type '{new_value}'. Available types: {available}..."
+
+        return None  # ✅ Valid
+
+
+    # currently not used: Cross-field validation for line features
+    def _validate_line_feature(self, feature):
+        """
+        Validate line feature as a whole (cross-field validation).
+        Checks constraints that require multiple fields (e.g., from_bus ≠ to_bus).
+
+        Args:
+            feature: QgsFeature to validate
+        Returns:
+            str or None: Error message if validation fails, None if valid
+        """
+        from_bus = feature.attribute('from_bus')
+        to_bus = feature.attribute('to_bus')
+
+        # Self-loop check: from_bus and to_bus must be different
+        if from_bus is not None and to_bus is not None:
+            if from_bus == to_bus:
+                return f"❌ from_bus and to_bus cannot be the same ({from_bus})"
+
+        # Optional: Voltage level warning (경고만 출력, validation error는 아님)
+        if from_bus in self.net.bus.index and to_bus in self.net.bus.index:
+            from_vn_kv = self.net.bus.loc[from_bus, 'vn_kv']
+            to_vn_kv = self.net.bus.loc[to_bus, 'vn_kv']
+            if from_vn_kv != to_vn_kv:
+                print(f"⚠️ Warning: Voltage level mismatch "
+                      f"({from_vn_kv} kV vs {to_vn_kv} kV) for line {from_bus}->{to_bus}")
+                # Note: This is just a warning, not a validation error
 
         return None  # ✅ Valid
 
@@ -1060,26 +1095,8 @@ class PandapowerProvider(QgsVectorDataProvider):
                     # Modified data currently in memory
                     current_df = getattr(self.provider.net, self.provider.network_type)
 
-                    print("=" * 80)
-                    print("🔍 DEBUG: SaveThread START")
-                    print(f"self.provider.network_type: {self.provider.network_type}")
-                    print(f"current_df.shape: {current_df.shape}")
-                    print(f"current_df.index (first 10): {current_df.index[:10].tolist()}")
-                    print(f"current_df.index (last 5): {current_df.index[-5:].tolist()}")
-                    print(f"current_df.columns: {current_df.columns.tolist()}")
-                    print("=" * 80)
-
                     # Update the original network's data with modified attributes
                     original_df = getattr(original_net, self.provider.network_type)
-
-                    print("=" * 80)
-                    print("🔍 DEBUG: Original network loaded")
-                    print(f"original_df.shape: {original_df.shape}")
-                    print(f"original_df.index (first 10): {original_df.index[:10].tolist()}")
-                    print(f"original_df.index (last 5): {original_df.index[-5:].tolist()}")
-                    print("=" * 80)
-                    updated_count = 0 #debug
-                    new_count = 0 #debug
 
                     # ✨✨✨ 추가: 새로운 rows를 모을 리스트 초기화
                     new_rows = []
@@ -1092,26 +1109,11 @@ class PandapowerProvider(QgsVectorDataProvider):
                             for col in current_df.columns:
                                 if col in original_df.columns:
                                     original_df.at[idx, col] = current_df.at[idx, col]
-                            updated_count += 1 # debug
-                        # else:
-                        #     # For newly added feature, add new row to original network
-                        #     new_row = current_df.loc[idx].to_frame().T
-                        #     # Concatenate new row to original dataframe
-                        #     updated_df = pd.concat([original_df, new_row], ignore_index=False)
-                        #
-                        #     # Update the network object
-                        #     setattr(original_net, self.provider.network_type, updated_df)
-                        #
-                        #     # Update local reference for next iteration
-                        #     original_df = getattr(original_net, self.provider.network_type)
-                        #     print(f"✅ Row {idx} added successfully")
-                        #     new_count += 1 # debug
-                        # ✨✨✨ 추가: 새 row를 리스트에 수집만 함
+                        # 새 row를 리스트에 수집
                         else:
                             new_rows.append(current_df.loc[idx])
-                            new_count += 1  # debug
 
-                    # ✨✨✨ 추가: for 루프 종료 후, 한번에 concat 수행
+                    # for 루프 종료 후, 한번에 concat 수행
                     if new_rows:
                         new_df = pd.DataFrame(new_rows)
                         updated_df = pd.concat([original_df, new_df], ignore_index=False)
@@ -1119,16 +1121,6 @@ class PandapowerProvider(QgsVectorDataProvider):
                         # 로컬 변수도 업데이트 (라인 1111-1113에서 사용하기 때문)
                         original_df = getattr(original_net, self.provider.network_type)
                         print(f"✅ Added {len(new_rows)} new rows in single operation")
-
-
-                    print("=" * 80)
-                    print("🔍 DEBUG: SaveThread processing complete")
-                    print(f"Updated {updated_count} existing rows")
-                    print(f"Added {new_count} new rows")
-                    print(f"original_df.shape after processing: {original_df.shape}")
-                    print(f"original_df.index (first 10): {original_df.index[:10].tolist()}")
-                    print(f"original_df.index (last 5): {original_df.index[-5:].tolist()}")
-                    print("=" * 80)
 
                     # Save the updated network to JSON
                     try:
@@ -1175,19 +1167,6 @@ class PandapowerProvider(QgsVectorDataProvider):
                 - success (bool): True if features were successfully added, False otherwise
                 - features (list): The list of features with updated IDs and attributes
         """
-        import traceback
-        print("=" * 80)
-        print(f"🔥 addFeatures() CALLED for {self.network_type}")
-        print(f"   _save_in_progress = {self._save_in_progress}")
-        print(f"   features count = {len(features)}")
-        print("   Call stack:")
-        for line in traceback.format_stack()[-5:-1]:
-            print(f"     {line.strip()}")
-        print("=" * 80)
-
-        # Setup attribute form if not done yet
-        #self._setup_attribute_form()
-
         # Check if save operation is in progress
         if self._save_in_progress:
             from qgis.utils import iface
@@ -1200,7 +1179,7 @@ class PandapowerProvider(QgsVectorDataProvider):
             )
             return (False, [])
 
-        # 🛡️ NEW: Pre-validation - Check if file can be saved BEFORE processing
+        # Pre-validation - Check if file can be saved BEFORE processing
         if not self._validate_can_save():
             print("❌ addFeatures aborted: Pre-validation failed")
             return (False, [])  # QGIS will keep features in buffer (no commit)
@@ -1264,15 +1243,10 @@ class PandapowerProvider(QgsVectorDataProvider):
                 print("No features were added to pandapower network")
                 return (False, [])
 
-            # 🔥🔥🔥 수정: 새 row만 self.df에 추가
-            print("=" * 80)
-            print("🔄 Adding new rows to self.df...")
-            print(f"BEFORE: self.df.shape = {self.df.shape}, index = {self.df.index.tolist()}")
-
             # net.bus와 net.res_bus에서 해당 row 가져오기
             df_network_type = getattr(self.net, self.network_type)
             df_res_network_type = getattr(self.net, f'res_{self.network_type}')
-            # 🎯 NEW: 새 rows를 리스트에 모으기
+
             new_rows = []
 
             # 각 새 feature를 self.df에 추가
@@ -1310,32 +1284,8 @@ class PandapowerProvider(QgsVectorDataProvider):
                 self.df = pd.concat([self.df, new_df], ignore_index=False)
                 print(f"✅ Added {len(new_rows)} rows to self.df in single concat operation")
 
-            print(f"AFTER: self.df.shape = {self.df.shape}")
-            print(f"self.df.index: {self.df.index.tolist()}")
-            print("=" * 80)
-
-            # # Update NetworkContainer to notify all listeners
-            # NetworkContainer.register_network(self.uri, {'net': self.net, 'vn_kv': self.vn_kv,
-            #                                              'type_layer_name': self.type_layer_name,
-            #                                              'network_type': self.network_type,
-            #                                              'current_crs': self.current_crs})
-
             # Save to JSON file asynchronously
             def on_save_complete(success, message, backup_path=None):
-                print("=" * 80)
-                print("🔍 DEBUG: on_save_complete() START")
-                print(f"success: {success}")
-                print(f"message: {message}")
-                print(f"self.net.bus.shape: {self.net.bus.shape}")
-                print(f"self.net.bus.index (first 10): {self.net.bus.index[:10].tolist()}")
-                print(f"self.net.bus.index (last 5): {self.net.bus.index[-5:].tolist()}")
-                print(f"self.df.shape: {self.df.shape}")
-                print(
-                    f"self.df.index (first 10): {self.df.index[:10].tolist() if len(self.df) >= 10 else self.df.index.tolist()}")
-                print(
-                    f"self.df.index (last 5): {self.df.index[-5:].tolist() if len(self.df) >= 5 else self.df.index.tolist()}")
-                print("=" * 80)
-
                 self._save_in_progress = False
 
                 from qgis.core import Qgis
@@ -1348,18 +1298,6 @@ class PandapowerProvider(QgsVectorDataProvider):
                         level=Qgis.Success,
                         duration=5
                     )
-
-                    print("=" * 80)
-                    print("🔍 DEBUG: BEFORE dataChanged.emit()")
-                    print(f"self.net.bus.shape: {self.net.bus.shape}")
-                    print(f"self.net.bus.index[:10]: {self.net.bus.index[:10].tolist()}")
-                    print(f"self.net.bus.index[-5:]: {self.net.bus.index[-5:].tolist()}")
-                    print(f"self.df.shape: {self.df.shape}")
-                    print(
-                        f"self.df.index[:10]: {self.df.index[:10].tolist() if len(self.df) >= 10 else self.df.index.tolist()}")
-                    print(
-                        f"self.df.index[-5:]: {self.df.index[-5:].tolist() if len(self.df) >= 5 else self.df.index.tolist()}")
-                    print("=" * 80)
 
                     # 💾✅ NEW: 저장 성공 후 NetworkContainer 업데이트 (changeGeometry/AttributeValues 패턴)
                     network_data = {
@@ -1375,17 +1313,6 @@ class PandapowerProvider(QgsVectorDataProvider):
                     # Trigger data change notification
                     self.dataChanged.emit()
 
-                    print("=" * 80)
-                    print("🔍 DEBUG: AFTER dataChanged.emit()")
-                    print(f"self.net.bus.shape: {self.net.bus.shape}")
-                    print(f"self.net.bus.index[:10]: {self.net.bus.index[:10].tolist()}")
-                    print(f"self.net.bus.index[-5:]: {self.net.bus.index[-5:].tolist()}")
-                    print(f"self.df.shape: {self.df.shape}")
-                    print(
-                        f"self.df.index[:10]: {self.df.index[:10].tolist() if len(self.df) >= 10 else self.df.index.tolist()}")
-                    print(
-                        f"self.df.index[-5:]: {self.df.index[-5:].tolist() if len(self.df) >= 5 else self.df.index.tolist()}")
-                    print("=" * 80)
                 else:
                     iface.messageBar().pushMessage(
                         "⚠️ Save Failed - Features added to memory but NOT Saved to File",
@@ -1394,39 +1321,9 @@ class PandapowerProvider(QgsVectorDataProvider):
                         duration=0
                     )
 
-                    # 📋 Detailed log for debugging
-                    print("=" * 80)
-                    print("❌ SAVE FAILED - FEATURES NOT IN FILE")
-                    print(f"Features in memory only: {added_indices}")
-                    print(f"Reason: {message}")
-                    print(f"File: {self.uri_parts.get('path', 'unknown')}")
-                    print("=" * 80)
-                    print("⚠️ USER ACTION REQUIRED:")
-                    print("  1. Fix the issue (close programs, check permissions)")
-                    print("  2. Save again (Ctrl+S)")
-                    print("  3. Or Undo (Ctrl+Z) to remove features")
-                    print("⚠️ Features will disappear on QGIS restart if not saved!")
-                    print("=" * 80)
-                    # 💾❌ NEW: 저장 실패 시 NetworkContainer 업데이트 안 함 (디버깅 로그)
-
-                    print("⚠️ NetworkContainer NOT updated due to save failure")
-                    print(f"⚠️ Feature {added_indices} exists in memory but not in file or NetworkContainer")
-
-            # Direct after NetworkContainer update
-            print(f"=" * 80)
-            print(f"🔍 BEFORE SAVE:")
-            print(f"self.net.bus.index.tolist()[-5:] = {self.net.bus.index.tolist()[-5:]}")
-            print(f"Bus 320 in self.net.bus? {320 in self.net.bus.index}")
-            print(f"self.net is ? {id(self.net)}")
-            print(f"=" * 80)
 
             # Async run
-            print(f"Calling update_attributes_in_json_async()...")
             self.update_attributes_in_json_async(on_save_complete)
-            print(f"update_attributes_in_json_async() returned")
-
-            print(f"Added {len(added_indices)} features: {added_indices}")
-            print(f"Returning (True, features)")
             return (True, features)
 
         except Exception as e:
@@ -1513,7 +1410,7 @@ class PandapowerProvider(QgsVectorDataProvider):
             return
 
         try:
-            from qgis.core import QgsEditFormConfig, QgsDefaultValue, QgsFieldConstraints, QgsEditorWidgetSetup
+            from qgis.core import QgsEditFormConfig, QgsDefaultValue, QgsFieldConstraints, QgsEditorWidgetSetup, QgsAttributeEditorField
 
             # Try to get layer from QgsProject
             layer = self._get_layer()
@@ -1528,12 +1425,32 @@ class PandapowerProvider(QgsVectorDataProvider):
             #field_names = [f.name() for f in self.fields()]
             field_names = [f.name() for f in self.fields_list]
 
+            # ➕➕➕ 새로 추가: Form Layout 설정 (line ~1586 이전에 삽입)
+            config.setLayout(QgsEditFormConfig.TabLayout)
+            root = config.invisibleRootContainer()
+            root.clear()  # 기존 필드들 제거
+            # ➕ result DataFrame 가져오기
+            df_res = getattr(self.net, f'res_{self.network_type}', None)
+            # ➕➕➕ 새로 추가 끝
+
             # Configure each field
             for field_name in field_names:
                 #field_idx = self.fields().indexOf(field_name)
                 field_idx = self.fields_list.indexOf(field_name)
                 if field_idx < 0:
                     continue
+
+                # ➕➕➕ 새로 추가: 숨길 필드 필터링
+                # pp_index와 result 컬럼은 Form에 추가하지 않음 (= 숨김)
+                if field_name == 'pp_index':
+                    continue
+                if df_res is not None and field_name in df_res.columns:
+                    continue
+
+                # ➕ Form에 필드 추가 (표시할 필드만)
+                element = QgsAttributeEditorField(field_name, field_idx, root)
+                root.addChildElement(element)
+                # ➕➕➕ 새로 추가 끝
 
                 # Configure read-only fields with default values
                 if not self.is_field_editable(field_name):
@@ -1763,33 +1680,88 @@ class PandapowerProvider(QgsVectorDataProvider):
                 field_name = field.name()
                 if self.is_field_editable(field_name):
                     value = feature.attribute(field_name)
+
+                    # 🔧 FIX: QVariant를 Python 값으로 변환
+                    if hasattr(value, 'isNull'):  # QVariant 객체인 경우
+                        if value.isNull():
+                            value = None
+                        else:
+                            value = value.value()  # Python native 타입으로 변환
+
+                    # 빈 문자열이나 'NULL' 문자열을 None으로 정규화
+                    if isinstance(value, str):
+                        value = value.strip()
+                        if value == '' or value.upper() == 'NULL':
+                            value = None
+
                     # Skip None/NULL values - let pandapower use defaults
                     if value is not None and not pd.isna(value):
+                        # 🌟🌟🌟 CHANGED: QGIS field type 대신 DataFrame dtype 사용
+                        # BEFORE: field_type = field.type()
+                        # BEFORE: if field_type == QMetaType.Double:
+                        #
+                        # AFTER: DataFrame의 실제 dtype 확인
+                        df_network_type = getattr(self.net, self.network_type)
+
+                        # 🔍 DEBUG: 타입 변환 전 상태 출력
+                        print(f"🔍 Field: {field_name}, Value: {repr(value)}, Type: {type(value)}")
+
+                        # 🌟 NEW: Check if field exists in DataFrame and get its dtype
+                        if field_name in df_network_type.columns:
+                            dtype = df_network_type[field_name].dtype
+                            print(f"  → DataFrame dtype: {dtype}")
+
+                            try:
+                                # 🌟🌟🌟 CHANGED: QMetaType 비교 → pandas dtype 체크
+                                # BEFORE: if field_type == QMetaType.Double or field_type == QMetaType.Float:
+                                # AFTER:  if pd.api.types.is_float_dtype(dtype):
+                                if pd.api.types.is_float_dtype(dtype):
+                                    # Convert to float (e.g., '123' → 123.0)
+                                    print(f"  → Converting to float")
+                                    value = float(value)
+
+                                # 🌟🌟🌟 CHANGED: QMetaType 비교 → pandas dtype 체크
+                                # BEFORE: elif field_type == QMetaType.Int or field_type == QMetaType.LongLong:
+                                # AFTER:  elif pd.api.types.is_integer_dtype(dtype):
+                                elif pd.api.types.is_integer_dtype(dtype):
+                                    # Convert to int (e.g., '123' → 123)
+                                    print(f"  → Converting to int")
+                                    value = int(value)
+
+                                # 🌟🌟🌟 CHANGED: QMetaType 비교 → pandas dtype 체크
+                                # BEFORE: elif field_type == QMetaType.Bool:
+                                # AFTER:  elif pd.api.types.is_bool_dtype(dtype):
+                                elif pd.api.types.is_bool_dtype(dtype):
+                                    # Convert to bool (e.g., 'True' → True)
+                                    print(f"  → Converting to bool")
+                                    if isinstance(value, str):
+                                        value = value.lower() in ['true', '1', 'yes']
+                                    else:
+                                        value = bool(value)
+                                else:
+                                    # String or other types - no conversion needed
+                                    print(f"  → No conversion (string or other type)")
+
+                            # 🌟🌟🌟 CHANGED: 에러 메시지 수정
+                            # BEFORE: print(f"⚠️ Warning: Could not convert {field_name}={value} to {field_type}, skipping")
+                            # AFTER:  print(f"⚠️ Warning: Could not convert {field_name}={value} to {dtype}, skipping")
+                            except (ValueError, TypeError) as e:
+                                print(f"⚠️ Warning: Could not convert {field_name}={value} to {dtype}, skipping")
+                                continue
+                        else:
+                            # 🌟 NEW: Field not in DataFrame 처리 추가
+                            print(f"  → Field not in DataFrame, keeping as-is")
+
+                        print(f"  ✅ After conversion: {repr(value)}, Type: {type(value)}")
                         attributes[field_name] = value
 
             # Create element based on network type
             if self.network_type == 'bus':
-                # Create bus
                 # Required: name, vn_kv
-                # Get vn_kv from layer (not from user input)
-                # name = attributes.get('name', f'Bus_{self._get_next_index()}')
                 name = attributes.pop('name', f'Bus_{self._get_next_index()}')
                 type_val = attributes.pop('type', 'b')
                 in_service = attributes.pop('in_service', True)
                 # In attributes remains now kwargs
-
-
-                # 🔍 디버깅: create_bus 호출 전
-                print("=" * 80)
-                print("🔍 DEBUG: BEFORE pp.create_bus()")
-                print(f"self.net.bus.shape: {self.net.bus.shape}")
-                print(f"self.net.bus.columns: {self.net.bus.columns.tolist()}")
-                print(f"self.net.bus.index (first 10): {self.net.bus.index[:10].tolist()}")
-                print(f"self.net.bus.index (last 5): {self.net.bus.index[-5:].tolist()}")
-                print(f"self.net.bus DataFrame id: {id(self.net.bus)}")
-                print(f"kwargs to pass: {attributes}")
-                print("=" * 80)
-
 
                 # Create bus with required parameters
                 idx = pp.create_bus(
@@ -1798,21 +1770,8 @@ class PandapowerProvider(QgsVectorDataProvider):
                     vn_kv=self.vn_kv,  # Use layer's voltage level
                     type=type_val,
                     in_service=in_service,
-                    **attributes    # oder *?
+                    **attributes
                 )
-
-                # 🔍 디버깅: create_bus 호출 후
-                print("=" * 80)
-                print("🔍 DEBUG: AFTER pp.create_bus()")
-                print(f"Created bus index: {idx}")
-                print(f"self.net.bus.shape: {self.net.bus.shape}")
-                print(f"self.net.bus.columns: {self.net.bus.columns.tolist()}")
-                print(f"self.net.bus.index (first 10): {self.net.bus.index[:10].tolist()}")
-                print(f"self.net.bus.index (last 5): {self.net.bus.index[-5:].tolist()}")
-                print(f"self.net.bus DataFrame id: {id(self.net.bus)}")
-                print(f"Bus {idx} data:")
-                print(self.net.bus.loc[idx])
-                print("=" * 80)
 
                 # Add empty res row immediately
                 self._add_empty_res_row(idx)
@@ -1820,47 +1779,60 @@ class PandapowerProvider(QgsVectorDataProvider):
                 # Add geometry to geo column
                 if not geometry.isNull():
                     point = geometry.asPoint()
-                    geo_json = json.dumps({
-                        'type': 'Point',
-                        'coordinates': [point.x(), point.y()]
-                    })
+                    geo_json = json.dumps({'coordinates': [point.x(), point.y()], 'type': 'Point'})
                     self.net.bus.at[idx, 'geo'] = geo_json
-
-                print(f"Created bus {idx}: {name} at {self.vn_kv} kV")
                 return idx
 
             elif self.network_type == 'line':
-                # Create line
-                # Required: from_bus, to_bus, length_km, std_type
-                # from_bus = attributes.get('from_bus')
-                # to_bus = attributes.get('to_bus')
-                # length_km = attributes.get('length_km')
-                # std_type = attributes.get('std_type')
+                # Required: from_bus, to_bus, length_km / Optional: std_type (if NULL, must provide r, x, c parameters)
                 from_bus = attributes.pop('from_bus', None)
                 to_bus = attributes.pop('to_bus', None)
                 length_km = attributes.pop('length_km', None)
                 std_type = attributes.pop('std_type', None)
 
-                if from_bus is None or to_bus is None or length_km is None or std_type is None:
-                    self.pushError("Missing required fields for line: from_bus, to_bus, length_km, std_type")
+                if from_bus is None or to_bus is None or length_km is None:
+                    self.pushError("Missing required fields for line: from_bus, to_bus, length_km")
                     return None
 
                 name = attributes.pop('name', f'Line_{self._get_next_index()}')
                 in_service = attributes.pop('in_service', True)
                 parallel = attributes.pop('parallel', 1)
 
-                # Create line with required parameters
-                idx = pp.create_line(
-                    self.net,
-                    from_bus=int(from_bus),
-                    to_bus=int(to_bus),
-                    length_km=float(length_km),
-                    std_type=std_type,
-                    name=name,
-                    in_service=in_service,
-                    parallel=parallel,
-                    **attributes
-                )
+                # std_type NULL → use create_line_from_parameters() instead
+                if std_type is None or std_type == '' or std_type == 'NULL':
+                    required_params = ['r_ohm_per_km', 'x_ohm_per_km', 'c_nf_per_km']
+                    missing = [p for p in required_params if p not in attributes or attributes[p] is None]
+
+                    if missing:
+                        self.pushError(
+                            f"std_type is NULL, but required parameters are missing: {missing}\n"
+                            f"Either provide std_type or all of: r_ohm_per_km, x_ohm_per_km, c_nf_per_km"
+                        )
+                        return None
+
+                    idx = pp.create_line_from_parameters(
+                        self.net,
+                        from_bus=int(from_bus),
+                        to_bus=int(to_bus),
+                        length_km=float(length_km),
+                        name=name,
+                        in_service=in_service,
+                        parallel=parallel,
+                        **attributes  # r_ohm_per_km, x_ohm_per_km, c_nf_per_km, etc.
+                    )
+                else:
+                    # std_type not null → create_line()
+                    idx = pp.create_line(
+                        self.net,
+                        from_bus=int(from_bus),
+                        to_bus=int(to_bus),
+                        length_km=float(length_km),
+                        std_type=std_type,
+                        name=name,
+                        in_service=in_service,
+                        parallel=parallel,
+                        **attributes
+                    )
 
                 # Add empty res row immediately
                 self._add_empty_res_row(idx)
@@ -1870,10 +1842,16 @@ class PandapowerProvider(QgsVectorDataProvider):
                     line_geom = geometry.asPolyline()
                     coords = [[point.x(), point.y()] for point in line_geom]
                     geo_json = json.dumps({
-                        'type': 'LineString',
-                        'coordinates': coords
+                        'coordinates': coords,
+                        'type': 'LineString'
                     })
                     self.net.line.at[idx, 'geo'] = geo_json
+
+                # 🌟🌟🌟 NEW: vn_kv 동기화 로직 추가 (전체 블록 신규)
+                if from_bus in self.net.bus.index:
+                    from_vn_kv = self.net.bus.loc[from_bus, 'vn_kv']
+                    self.net.line.at[idx, 'vn_kv'] = from_vn_kv
+                    print(f"✅ Set line.vn_kv = {from_vn_kv} kV (from bus {from_bus})")
 
                 print(f"Created line {idx}: {from_bus} -> {to_bus}, {length_km} km")
                 return idx
