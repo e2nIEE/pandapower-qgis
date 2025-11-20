@@ -968,7 +968,7 @@ class PandapowerProvider(QgsVectorDataProvider):
         #             available = list(self.net.std_types['line'].keys())[:5]
         #             return f"❌ Invalid std_type '{new_value}'. Available types: {available}..."
 
-        return None  # ✅ Valid
+        return None
 
 
     # currently not used: Cross-field validation for line features
@@ -976,7 +976,6 @@ class PandapowerProvider(QgsVectorDataProvider):
         """
         Validate line feature as a whole (cross-field validation).
         Checks constraints that require multiple fields (e.g., from_bus ≠ to_bus).
-
         Args:
             feature: QgsFeature to validate
         Returns:
@@ -999,7 +998,7 @@ class PandapowerProvider(QgsVectorDataProvider):
                       f"({from_vn_kv} kV vs {to_vn_kv} kV) for line {from_bus}->{to_bus}")
                 # Note: This is just a warning, not a validation error
 
-        return None  # ✅ Valid
+        return None
 
 
     def is_field_editable(self, field_name):
@@ -1122,6 +1121,24 @@ class PandapowerProvider(QgsVectorDataProvider):
                         original_df = getattr(original_net, self.provider.network_type)
                         print(f"✅ Added {len(new_rows)} new rows in single operation")
 
+                    # # 삭제된 rows 처리 (deleteFeatures 지원)
+                    # # current_df에는 없지만 original_df에는 있는 인덱스 = 삭제된 요소
+                    # deleted_indices = original_df.index.difference(current_df.index)
+                    # if len(deleted_indices) > 0:
+                    #     original_df.drop(deleted_indices, inplace=True, errors='ignore')
+                    #     print(f"✅ Removed {len(deleted_indices)} deleted row(s) from {self.provider.network_type}")
+                    #
+                    #     # res_ DataFrame에서도 삭제
+                    #     res_table_name = f'res_{self.provider.network_type}'
+                    #     if hasattr(original_net, res_table_name):
+                    #         original_res_df = getattr(original_net, res_table_name)
+                    #         if original_res_df is not None and not original_res_df.empty:
+                    #             deleted_res_indices = original_res_df.index.intersection(deleted_indices)
+                    #             if len(deleted_res_indices) > 0:
+                    #                 original_res_df.drop(deleted_res_indices, inplace=True, errors='ignore')
+                    #                 print(
+                    #                     f"✅ Removed {len(deleted_res_indices)} deleted row(s) from {res_table_name}")
+
                     # Save the updated network to JSON
                     try:
                         pp.to_json(original_net, original_path)
@@ -1149,6 +1166,99 @@ class PandapowerProvider(QgsVectorDataProvider):
 
         # Starting thread
         self._save_thread.start()
+
+
+    def update_entire_network_in_json_async(self, callback=None):
+        """
+        Save the ENTIRE network to JSON file asynchronously.
+        This method saves the complete network state without merge logic.
+        Use this for operations that modify multiple element types simultaneously,
+        such as cascade deletions (deleting a bus also deletes connected lines, loads, etc.).
+        - Differences from update_attributes_in_json_async():
+            - update_attributes_in_json_async(): Smart merge for single layer (bus OR line)
+            - update_entire_network_in_json_async(): Direct save of entire network
+        Args:
+            callback: Optional callback function(success: bool, message: str, backup_path: str)
+                     to be called after save completes
+        """
+        # Check if another save operation is in progress
+        if self._save_in_progress:
+            from qgis.utils import iface
+            from qgis.core import Qgis
+            iface.messageBar().pushMessage(
+                "Operation in Progress",
+                "Another save operation is in progress. Please try again later.",
+                level=Qgis.Info
+            )
+            return
+        else:
+            self._save_in_progress = True
+
+        from PyQt5.QtCore import QThread, pyqtSignal
+
+        class SaveThread(QThread):
+            # Save Completion Signal (Success Status, Message, Backup Path)
+            saveCompleted = pyqtSignal(bool, str, str)
+
+            def __init__(self, provider):
+                super().__init__()
+                self.provider = provider
+
+            def run(self):
+                try:
+                    import pandapower as pp
+                    import os
+                    import shutil
+                    from datetime import datetime
+
+                    original_path = self.provider.uri_parts.get('path', '')
+                    if not original_path or not os.path.exists(original_path):
+                        self.saveCompleted.emit(False, f"Cannot find original file at: {original_path}", "")
+                        return
+
+                    # Create Backup File (Add Date/Time Stamp)
+                    backup_path = f"{original_path}.{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak"
+                    try:
+                        shutil.copy2(original_path, backup_path)
+                        print(f"✅ Backup file created: {backup_path}")
+                    except Exception as e:
+                        print(f"❌ Error creating backup: {str(e)}")
+                        self.saveCompleted.emit(False, f"Failed to create backup: {str(e)}", "")
+                        return
+
+                    # Save the entire network directly
+                    # Note: self.provider.net contains the ENTIRE network (not filtered)
+                    # Any modifications (like cascade deletions) are already applied to it
+                    try:
+                        pp.to_json(self.provider.net, original_path)
+                        success_msg = f"Entire network saved: {original_path}"
+                        self.saveCompleted.emit(True, success_msg, backup_path)
+                        print(f"✅ Entire network saved to JSON")
+                    except PermissionError:
+                        error_msg = f"Cannot access the file. It may be open in another program: {original_path}"
+                        self.saveCompleted.emit(False, error_msg, backup_path)
+                    except Exception as e:
+                        error_msg = f"Error saving file: {str(e)}"
+                        self.saveCompleted.emit(False, error_msg, backup_path)
+
+                except Exception as e:
+                    import traceback
+                    error_msg = f"Error saving entire network: {str(e)}"
+                    traceback.print_exc()
+                    self.saveCompleted.emit(False, error_msg, "")
+
+        # Create a thread for saving
+        self._save_thread = SaveThread(self)
+
+        # Connect callback
+        if callback:
+            self._save_thread.saveCompleted.connect(callback)
+
+        # Start thread
+        self._save_thread.start()
+
+
+    # ===============================================================================
 
 
     def addFeatures(self, features, flags=None):
@@ -1938,6 +2048,484 @@ class PandapowerProvider(QgsVectorDataProvider):
         return True
 
 
+    # =========================================================================
+
+
+    def deleteFeatures(self, fids):
+        """
+        Delete features from the pandapower network.
+        This method is called by QGIS when user deletes features.
+        - For buses: Shows connected elements and asks for confirmation before cascade delete.
+        - For lines: Deletes safely using pandapower function.
+        Args:
+            fids: QgsFeatureIds (set of feature IDs) to delete
+        Returns:
+            bool: True if deletion was successful, False otherwise
+        """
+        # Check if another save operation is in progress
+        if self._save_in_progress:
+            from qgis.utils import iface
+            from qgis.core import Qgis
+            iface.messageBar().pushMessage(
+                "Operation in Progress",
+                "Another save operation is in progress. Please wait until it completes.",
+                level=Qgis.Warning,
+                duration=5
+            )
+            return False
+
+        # Pre-validation: Check if file can be saved
+        if not self._validate_can_save():
+            print("❌ deleteFeatures aborted: Pre-validation failed")
+            return False
+
+        try:
+            # Route to appropriate deletion method based on network type
+            if self.network_type == 'bus':
+                # Bus deletion: Check connections and ask for user confirmation
+                return self._delete_buses_with_confirmation(fids)
+
+            elif self.network_type == 'line':
+                # Line deletion: Direct deletion (safe, no dependencies)
+                return self._delete_lines(fids)
+
+            elif self.network_type in ['junction', 'pipe']:
+                # Not yet implemented
+                from qgis.utils import iface
+                from qgis.core import Qgis
+                iface.messageBar().pushMessage(
+                    "Not Implemented",
+                    f"Delete feature is not yet implemented for {self.network_type}.\n"
+                    f"This feature will be available in a future version.",
+                    level=Qgis.Info,
+                    duration=5
+                )
+                print(f"⚠️ deleteFeatures not implemented for {self.network_type}")
+                return False
+
+            else:
+                # Unknown network type
+                self.pushError(f"Unsupported network type for deleteFeatures: {self.network_type}")
+                return False
+
+        except Exception as e:
+            self.pushError(f"Failed to delete features: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+
+    def _get_bus_connected_elements_info(self, bus_ids):
+        """
+        Get information about all elements connected to given buses.
+        Uses pp.element_bus_tuples() for dynamic discovery of element types.
+        Args:
+            bus_ids: List or set of bus indices to check
+        Returns:
+            dict: {
+                'in_qgis_layers': {
+                    'line': [10, 11, 12],  # Elements visible in QGIS layers
+                },
+                'in_network_only': {
+                    'load': [5, 8],        # Elements only in JSON (not visible in QGIS)
+                    'trafo': [2],
+                    'gen': [3]
+                },
+                'total_count': 7           # Total number of connected elements
+            }
+        """
+        try:
+            # pandapower's element_bus_tuples for dynamic element discovery
+            element_tuples = pp.element_bus_tuples(
+                bus_elements=True,  # load, gen, sgen, etc.
+                branch_elements=True  # line, trafo, etc.
+            )
+
+            in_qgis = {}  # Elements visible in QGIS layers
+            in_json = {}  # Elements only in JSON file
+
+            # QGIS layer types currently managed by the plugin
+            qgis_layer_types = {'line'}     # Currently only 'line' is shown as a layer besides 'bus'
+
+            # Convert bus_ids to set for faster lookup
+            bus_id_set = set(bus_ids)
+
+            # Scan all element types for connections
+            for element_type, bus_column in element_tuples:
+                # Check if this element table exists in the network
+                if not hasattr(self.net, element_type):
+                    continue
+
+                element_df = getattr(self.net, element_type)
+                if element_df is None or element_df.empty:
+                    continue
+
+                # Check if the bus reference column exists
+                if bus_column not in element_df.columns:
+                    continue
+
+                # Find elements that reference any of the buses to be deleted
+                connected = element_df[element_df[bus_column].isin(bus_id_set)]
+
+                if not connected.empty:
+                    indices = connected.index.tolist()
+
+                    # Classify: QGIS layer vs JSON-only
+                    if element_type in qgis_layer_types:
+                        if element_type not in in_qgis:
+                            in_qgis[element_type] = []
+                        in_qgis[element_type].extend(indices)
+                    else:
+                        if element_type not in in_json:
+                            in_json[element_type] = []
+                        in_json[element_type].extend(indices)
+
+            # Remove duplicates (in case an element references the same bus multiple times)
+            for key in in_qgis:
+                in_qgis[key] = sorted(list(set(in_qgis[key])))
+            for key in in_json:
+                in_json[key] = sorted(list(set(in_json[key])))
+
+            # Calculate total count
+            total = sum(len(v) for v in in_qgis.values()) + sum(len(v) for v in in_json.values())
+
+            return {
+                'in_qgis_layers': in_qgis,
+                'in_network_only': in_json,
+                'total_count': total
+            }
+
+        except Exception as e:
+            self.pushError(f"❌ Error getting connected elements info: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            # Return empty result on error
+            return {
+                'in_qgis_layers': {},
+                'in_network_only': {},
+                'total_count': 0
+            }
+
+
+    def _delete_buses_with_confirmation(self, fids):
+        """
+        Delete buses with user confirmation after checking connected elements.
+        Implements All or Nothing principle - either all buses are deleted or none.
+        Args:
+            fids: QgsFeatureIds (set of feature IDs) to delete
+        Returns:
+            bool: True if deletion was successful, False otherwise
+        """
+        try:
+            # Convert to list for processing
+            bus_ids = list(fids)
+
+            # Validation: Check which buses actually exist
+            valid_buses = [bid for bid in bus_ids if bid in self.net.bus.index]
+            invalid_buses = [bid for bid in bus_ids if bid not in self.net.bus.index]
+
+            if invalid_buses:
+                print(f"⚠️ Skipping invalid bus IDs: {invalid_buses}")
+
+            if not valid_buses:
+                print("❌ No valid buses to delete")
+                return False
+
+            # Get information about connected elements
+            print(f"🔍 Checking connections for {len(valid_buses)} bus(es): {valid_buses}")
+            connected_info = self._get_bus_connected_elements_info(valid_buses)
+
+            print(f"📊 Found {connected_info['total_count']} connected element(s)")
+            if connected_info['in_qgis_layers']:
+                print(f"   📍 In QGIS: {connected_info['in_qgis_layers']}")
+            if connected_info['in_network_only']:
+                print(f"   📄 In JSON: {connected_info['in_network_only']}")
+
+            # Show confirmation dialog to user
+            if not self._show_delete_confirmation_dialog(valid_buses, connected_info):
+                print("❌ User cancelled deletion")
+                return False
+
+            # User confirmed - proceed with deletion
+            print(f"🗑️ Deleting {len(valid_buses)} bus(es): {valid_buses}")
+
+            # Use pandapower's drop_buses function (handles connected elements automatically)
+            pp.drop_buses(self.net, valid_buses, drop_elements=True)
+            print(f"✅ Deleted from pandapower network (bus + connected elements)")
+
+            # Update self.df (merged DataFrame used by QGIS)
+            # Remove deleted buses from self.df
+            self.df.drop(valid_buses, inplace=True, errors='ignore')
+            print(f"✅ Deleted {len(valid_buses)} bus(es) from self.df")
+
+            # Save to JSON file and perform post-processing
+            return self._save_deletions(valid_buses, 'bus')
+
+        except Exception as e:
+            self.pushError(f"Failed to delete buses: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+
+    def _delete_lines(self, fids):
+        """
+        Delete lines safely using pandapower function.
+        Lines can be deleted without confirmation dialog since they typically don't have
+        dependent elements (simpler than bus deletion).
+        Args:
+            fids: QgsFeatureIds (set of feature IDs) to delete
+        Returns:
+            bool: True if deletion was successful, False otherwise
+        """
+        try:
+            # Convert to list for processing
+            line_ids = list(fids)
+
+            # Validation: Check which lines actually exist
+            valid_lines = [lid for lid in line_ids if lid in self.net.line.index]
+            invalid_lines = [lid for lid in line_ids if lid not in self.net.line.index]
+
+            if invalid_lines:
+                print(f"⚠️ Skipping invalid line IDs: {invalid_lines}")
+
+            if not valid_lines:
+                print("❌ No valid lines to delete")
+                return False
+
+            print(f"🗑️ Deleting {len(valid_lines)} line(s): {valid_lines}")
+
+            # Use pandapower's drop_lines function
+            # This also removes geodata and connected switches automatically
+            pp.drop_lines(self.net, valid_lines)
+            print(f"✅ Deleted from pandapower network (line + geodata + switches)")
+
+            # Update self.df (merged DataFrame used by QGIS)
+            self.df.drop(valid_lines, inplace=True, errors='ignore')
+            print(f"✅ Deleted {len(valid_lines)} line(s) from self.df")
+
+            # Save to JSON file and perform post-processing
+            return self._save_deletions(valid_lines, 'line')
+
+        except Exception as e:
+            self.pushError(f"Failed to delete lines: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+
+    def _notify_affected_layers(self):
+        """
+        Layer notification without NetworkContainer - call dataChanged.emit() directly on their providers
+        Notify all layers that share the same network file and voltage level.
+        This handles cascade deletions where multiple network_types are affected
+        (e.g., bus deletion causes line deletion).
+        """
+        try:
+            from qgis.core import QgsProject
+
+            my_path = self.uri_parts.get('path')
+            my_vn_kv = self.vn_kv if hasattr(self, 'vn_kv') else None
+
+            # Iterate through all layers in QGIS project
+            for layer in QgsProject.instance().mapLayers().values():
+                provider = layer.dataProvider()
+
+                if not hasattr(provider, 'uri_parts'):
+                    continue    # skip if not PandapowerProvider
+                layer_path = provider.uri_parts.get('path')
+                if layer_path != my_path:
+                    continue    # skip different network file
+                layer_vn_kv = provider.vn_kv if hasattr(provider, 'vn_kv') else None
+                if layer_vn_kv != my_vn_kv:
+                    continue    # skip different voltage level
+                if provider.uri == self.uri:
+                    continue    # Skip self (will be notified separately in _save_deletions())
+
+                # Notify affected layer
+                provider.dataChanged.emit()
+                layer.triggerRepaint()
+
+        except Exception as e:
+            self.pushError(f"❌ Error in _notify_affected_layers(): {str(e)}")
+            import traceback
+            traceback.print_exc()
+
+
+    def _save_deletions(self, deleted_ids, element_type):
+        """
+        Save deletions to JSON file asynchronously and update NetworkContainer.
+        Added direct layer notification for cascade deletions.
+        Args:
+            deleted_ids: List of deleted element indices
+            element_type: Type of element ('bus' or 'line')
+        Returns:
+            bool: True (async operation started successfully)
+        """
+        try:
+            # Define callback for after save completes
+            def on_save_complete(success, message, backup_path=None):
+                self._save_in_progress = False
+
+                from qgis.core import Qgis
+                from qgis.utils import iface
+
+                if success:
+                    iface.messageBar().pushMessage(
+                        "✅ Features Deleted",
+                        f"Deleted {len(deleted_ids)} {element_type}(s) and saved to file",
+                        level=Qgis.Success,
+                        duration=5
+                    )
+
+                    # Update NetworkContainer (sync all providers viewing this network)
+                    network_data = {
+                        'net': self.net,
+                        'vn_kv': self.vn_kv if hasattr(self, 'vn_kv') else None,
+                        'pn_bar': self.pn_bar if hasattr(self, 'pn_bar') else None,
+                        'type_layer_name': self.type_layer_name,
+                        'network_type': self.network_type,
+                        'current_crs': self.current_crs
+                    }
+                    NetworkContainer.register_network(self.uri, network_data)
+                    print("✅ NetworkContainer updated after successful deletion")
+
+                    # Direct layer notification - Trigger data change notification (refreshes QGIS display)
+                    # Notify self first
+                    self.dataChanged.emit()
+                    # For cascade deletions (bus deletion), notify affected layers
+                    if element_type == 'bus':
+                        self._notify_affected_layers()
+                else:
+                    iface.messageBar().pushMessage(
+                        "⚠️ Save Failed",
+                        f"Elements deleted from memory but NOT saved to file!\n"
+                        f"Deleted {element_type}(s): {deleted_ids}\n"
+                        f"Reason: {message}\n\n"
+                        f"You can restore from backup file if needed.",
+                        level=Qgis.Critical,
+                        duration=0
+                    )
+
+            # Start async save operation
+            # This will update both the element table and res_ table in JSON
+            self.update_entire_network_in_json_async(on_save_complete)
+            return True
+
+        except Exception as e:
+            self.pushError(f"Failed to initiate save operation: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            self._save_in_progress = False  # Reset flag on error
+            return False
+
+
+    def _show_delete_confirmation_dialog(self, bus_ids, connected_info):
+        """
+        Show detailed confirmation dialog for bus deletion with connected elements' information.
+        This is the second dialog (after QGIS default deletion confirmation).
+        Args:
+            bus_ids: List of bus indices to delete
+            connected_info: Dict from _get_bus_connected_elements_info()
+        Returns:
+            bool: True if user confirmed deletion, False if cancelled
+        """
+        try:
+            from qgis.PyQt.QtWidgets import QMessageBox
+            from qgis.PyQt.QtCore import Qt
+
+            # Get bus names for display
+            bus_names = []
+            for bid in bus_ids:
+                if bid in self.net.bus.index:
+                    name = self.net.bus.loc[bid, 'name'] if 'name' in self.net.bus.columns else f"Bus {bid}"
+                    bus_names.append(f"{name} (ID: {bid})")
+
+            # Create message box
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Warning)
+            msg.setWindowTitle("Confirm Cascade Delete")
+
+            # Main text: What buses are being deleted
+            if len(bus_ids) == 1:
+                main_text = f"You are about to delete this bus:\n• {bus_names[0]}"
+            else:
+                main_text = f"You are about to delete {len(bus_ids)} buses:\n"
+                for name in bus_names[:5]:  # Show max 5
+                    main_text += f"• {name}\n"
+                if len(bus_names) > 5:
+                    main_text += f"• ... and {len(bus_names) - 5} more\n"
+
+            msg.setText(main_text)
+
+            # Detailed information: Connected elements
+            detail_text = ""
+
+            if connected_info['total_count'] == 0:
+                # Safe case: No connected elements
+                detail_text += "✅ No connected elements found.\n"
+                detail_text += "   Safe to delete.\n\n"
+            else:
+                # Warning case: Has connected elements
+                detail_text += f"⚠️ WARNING: {connected_info['total_count']} connected element(s) will also be deleted!\n\n"
+
+                # Show QGIS layer elements (visible to user)
+                if connected_info['in_qgis_layers']:
+                    detail_text += "📍 Elements visible in QGIS Layers:\n"
+                    for elem_type, indices in connected_info['in_qgis_layers'].items():
+                        if len(indices) <= 10:
+                            detail_text += f"  • {len(indices)} {elem_type}(s): {indices}\n\n"
+                        else:
+                            detail_text += f"  • {len(indices)} {elem_type}(s): {indices[:10]} ... and {len(indices) - 10} more\n\n"
+
+                # Show JSON-only elements (not visible in QGIS)
+                if connected_info['in_network_only']:
+                    detail_text += "📄 Elements in JSON File Only (not visible in layer):\n"
+                    for elem_type, indices in connected_info['in_network_only'].items():
+                        if len(indices) <= 10:
+                            detail_text += f"  • {len(indices)} {elem_type}(s): {indices}\n\n"
+                        else:
+                            detail_text += f"  • {len(indices)} {elem_type}(s): {indices[:10]} ... and {len(indices) - 10} more\n\n"
+
+                # Total summary
+                total_elements = len(bus_ids) + connected_info['total_count']
+                detail_text += f"💡 Total: {total_elements} elements will be deleted ({len(bus_ids)} bus(es) + {connected_info['total_count']} connected)\n\n"
+
+            # Warning about undo
+            detail_text += "⚠️ This action cannot be undone!\n      (A backup file will be created automatically)\n"
+
+            msg.setInformativeText(detail_text)
+
+            # Configure buttons
+            msg.setStandardButtons(QMessageBox.Cancel | QMessageBox.Yes)
+            msg.setDefaultButton(QMessageBox.Cancel)  # Default to Cancel for safety
+
+            yes_button = msg.button(QMessageBox.Yes)
+            if connected_info['total_count'] == 0:
+                yes_button.setText("Delete Bus")
+            else:
+                total_elements = len(bus_ids) + connected_info['total_count']
+                yes_button.setText(f"Delete All ({total_elements})")
+
+            cancel_button = msg.button(QMessageBox.Cancel)
+            cancel_button.setText("Cancel")
+
+            # Show dialog and get result
+            result = msg.exec_()
+
+            if result == QMessageBox.Yes:
+                return True
+            else:
+                return False
+
+        except Exception as e:
+            self.pushError(f"❌ Error showing confirmation dialog: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return False    # On error, default to cancel (safe choice)
+
+    # =========================================================================
+
     def capabilities(self) -> QgsVectorDataProvider.Capabilities:
         """
         Return the capabilities supported by this data provider.
@@ -1949,7 +2537,8 @@ class PandapowerProvider(QgsVectorDataProvider):
             QgsVectorDataProvider.SelectAtId |
             QgsVectorDataProvider.ChangeGeometries |
             QgsVectorDataProvider.ChangeAttributeValues |
-            QgsVectorDataProvider.AddFeatures
+            QgsVectorDataProvider.AddFeatures |
+            QgsVectorDataProvider.DeleteFeatures
         )
 
 
@@ -2101,6 +2690,7 @@ class PandapowerProvider(QgsVectorDataProvider):
             bool: True if provider is valid and ready for use
         """
         return self._is_valid
+
 
     def storageType(self):
         """
