@@ -10,6 +10,7 @@ import pandapipes as ppi
 import os
 from . import pandapower_feature_iterator, pandapower_feature_source
 from .network_container import NetworkContainer
+from .provider_utils import MessageManager
 
 
 def convert_dtype_to_qmetatype(dtype):
@@ -86,27 +87,26 @@ class PandapowerProvider(QgsVectorDataProvider):
         self.pn_bar = None
         self._save_in_progress = False
         self._save_thread = None
+        self.network_data = None
 
         # Bring network data from container
         network_data = NetworkContainer.get_network(uri)
 
         # If container is empty (e.g., after project reload), load from file
         if network_data is None:
-            print(f"⚠️ NetworkContainer is empty for URI: {uri}")
-            print(f"🔄 Attempting to load network from file...")
-            network_data = self._load_network_from_file()
-
+            network_data, error = self._load_network_from_file()
             if network_data is None:
-                print(f"❌ Failed to load network from file: {self.uri_parts.get('path')}")
+                file_path = self.uri_parts.get('path', 'unknown')
+                MessageManager.show_error(
+                    "Network Load Failed",
+                    error or "Unknown error occurred"
+                )
                 return  # Safe early return - all attributes already initialized
-
-            # Successfully loaded - register to container
-            print(f"✅ Network loaded from file, registering to container...")
+            # Successfully loaded from file - register to container
             NetworkContainer.register_network(uri, network_data)
 
         # Setting network data
         self.net = network_data['net']
-
         if self.uri_parts['network_type'] in ['bus', 'line']:
             self.vn_kv = network_data['vn_kv']
         elif self.uri_parts['network_type'] in ['junction', 'pipe']:
@@ -115,15 +115,25 @@ class PandapowerProvider(QgsVectorDataProvider):
             raise ValueError("Invalid network_type. Expected 'bus', 'line', 'junction', 'pipe'.")  # necessary?
         self.network_type = self.uri_parts['network_type']
         self.type_layer_name = network_data['type_layer_name']
-
         self.current_crs = int(network_data['current_crs']) if network_data['current_crs'] else 4326
         self.crs = self.sourceCrs()
         self.fields_list = None
         self.df = None
         self._extent = None
 
+        # Store network_data as instance variable for reuse
+        # This eliminates the need to recreate network_data dict in addFeatures, deleteFeatures, etc.
+        # Reference semantics ensure self.net modifications are automatically reflected
+        self.network_data = {
+            'net': self.net,
+            'vn_kv': self.vn_kv if self.vn_kv is not None else None,
+            'pn_bar': self.pn_bar if self.pn_bar is not None else None,
+            'type_layer_name': self.type_layer_name,
+            'network_type': self.network_type,
+            'current_crs': self.current_crs
+        }
+
         provider_list = QgsProviderRegistry.instance().providerList()
-        print("provider list by init ppprovider", provider_list)
         self._is_valid = True
 
         # State tracking variables for asynchronous save operation of the changeGeometryValues method
@@ -143,9 +153,10 @@ class PandapowerProvider(QgsVectorDataProvider):
         """
         try:
             file_path = self.uri_parts.get('path', '')
-            if not file_path or not os.path.exists(file_path):
-                print(f"⚠️ File not found: {file_path}")
-                return None
+            if not file_path:
+                return None, "File path is empty"
+            if not os.path.exists(file_path):
+                return None, f"File not found: {file_path}"
 
             # Determine network type and load accordingly
             if self.network_type in ['bus', 'line']:
@@ -162,26 +173,21 @@ class PandapowerProvider(QgsVectorDataProvider):
                 layer_base_name = os.path.basename(file_path).split('.')[0]
                 type_layer_name = f'{layer_base_name}_{vn_kv}_{self.network_type}'
 
-                print(f"✅ Loaded pandapower network: vn_kv={vn_kv}")
-
                 return {
                     'net': net,
                     'vn_kv': vn_kv,
                     'type_layer_name': type_layer_name,
                     'network_type': self.network_type,
                     'current_crs': epsg
-                }
+                }, None
+
             elif self.network_type in ['junction', 'pipe']:
-                pass
+                return None, "Pipe networks not yet implemented"
             else:
-                print(f"❌ Unknown network_type: {self.network_type}")
-                return None
+                return None, f"Invalid network_type: {self.network_type}"
 
         except Exception as e:
-            print(f"❌ Error loading network from file: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return None
+            return None, f"Failed to load network: {str(e)}"
 
 
     def merge_df(self):
@@ -195,11 +201,6 @@ class PandapowerProvider(QgsVectorDataProvider):
             # Get the dataframes for the network type and its result
             df_network_type = getattr(self.net, self.network_type)
             df_res_network_type = getattr(self.net, f'res_{self.network_type}')
-
-            if df_network_type is None:
-                print(f"Error: No dataframe found for {self.network_type}.")
-                self.df = pd.DataFrame()  # Set to empty DataFrame
-                return
 
             if hasattr(self, 'vn_kv') and self.vn_kv is not None:
                 if self.network_type == 'bus':
@@ -256,17 +257,11 @@ class PandapowerProvider(QgsVectorDataProvider):
                         self.df[col_name] = None  # Initialize all result columns to None
 
             if self.df.empty:
-                print(f"Warning: The final DataFrame is empty. {self.network_type}, vn_kv: {getattr(self, 'vn_kv', 'N/A')}")
-                from qgis.utils import iface
-                from qgis.core import Qgis
-                if iface:
-                    iface.messageBar().pushMessage(
-                        "Warning",
-                        f"Layer '{self.type_layer_name}' is empty. No {self.network_type} found for this voltage level.",
-                        level=Qgis.Warning,
-                        duration=5
-                    )
-                return QgsFields()
+                MessageManager.show_warning(
+                    "Empty Layer",
+                    f"No {self.network_type} elements found for voltage level {getattr(self, 'vn_kv', 'N/A')} kV"
+                )
+                return
 
             # Add meta columns
             # pp_type: Network type (bus, line, junction, pipe)
@@ -275,9 +270,10 @@ class PandapowerProvider(QgsVectorDataProvider):
             self.df.insert(1, 'pp_index', self.df.index)
 
         except Exception as e:
-            print(f"❌ An error occurred in merge_df ({self.network_type}): {str(e)}")
-            import traceback
-            traceback.print_exc()
+            MessageManager.show_error(
+                "Data Processing Error",
+                f"Failed to merge dataframe of {self.network_type}: {str(e)}"
+            )
             self.df = pd.DataFrame()  # Return an empty DataFrame on error
 
 
@@ -295,12 +291,8 @@ class PandapowerProvider(QgsVectorDataProvider):
             print("length is 0, called merge df")
             self.merge_df()
 
-            # Check if dataframe is empty
             if self.df.empty:
-                print(f"No data available for network type: {self.network_type}, called in fields method while initializing")  # Debugging
-                return
-            else:
-                print("print df.columns: ", self.df.columns)
+                return QgsFields()
 
             # generate fields_list dynamically from column of the dataframe
             for column in self.df.columns:
@@ -331,6 +323,7 @@ class PandapowerProvider(QgsVectorDataProvider):
             )
         )
 
+    # =====================================================================================
 
     def changeGeometryValues(self, geometry_map):
         """
@@ -342,15 +335,10 @@ class PandapowerProvider(QgsVectorDataProvider):
         Returns:
             bool: True if update initiated successfully, False if operation denied or failed
         """
-        # Check if an existing save operation is in progress
         if self._save_in_progress:
-            from qgis.utils import iface
-            from qgis.core import Qgis
-            iface.messageBar().pushMessage(
+            MessageManager.show_warning(
                 "Notification",
-                "The previous save operation is still in progress. Please try again after it is completed.",
-                level=Qgis.Warning,
-                duration=5
+                "Previous save operation is still running. Please try again after it is completed."
             )
             return False  # Operation denied
 
@@ -378,7 +366,6 @@ class PandapowerProvider(QgsVectorDataProvider):
 
                             # Convert back into json String and save updated data in dataframe
                             geodata_df.loc[feature_id] = json.dumps(geo_data)
-                            print(f"Updated {self.network_type} geometry at ID {feature_id}: ({x}, {y})")
 
                             # Store as variable for reuse
                             updated_geo_str = json.dumps(geo_data)
@@ -393,9 +380,7 @@ class PandapowerProvider(QgsVectorDataProvider):
                                 df_network_type.at[feature_id, 'geo'] = updated_geo_str
 
                         except Exception as e:
-                            print(f"Error updating geometry for ID {feature_id}: {str(e)}")
-                    else:
-                        print(f"Warning: {self.network_type} with ID {feature_id} not found in geodata")
+                            raise ValueError(f"Error updating point geometry for ID {feature_id}: {str(e)}")
 
                 elif self.network_type in ['line', 'pipe']:
                     # If line or pipe, update coord list
@@ -417,7 +402,6 @@ class PandapowerProvider(QgsVectorDataProvider):
 
                             # Convert back into json String and save updated data in dataframe
                             geodata_df.loc[feature_id] = json.dumps(geo_data)
-                            print(f"Updated {self.network_type} geometry at ID {feature_id} with {len(coords)} points")
 
                             # Store changed geodata to update df and net
                             updated_geo_str = json.dumps(geo_data)
@@ -432,71 +416,54 @@ class PandapowerProvider(QgsVectorDataProvider):
                                 df_network_type.at[feature_id, 'geo'] = updated_geo_str
 
                         except Exception as e:
-                            print(f"Error updating line geometry for ID {feature_id}: {str(e)}")
-                    else:
-                        print(f"Warning: {self.network_type} with ID {feature_id} not found in geodata")
+                            raise ValueError(f"Error updating line geometry for ID {feature_id}: {str(e)}")
 
-            # Synchronous file saving tasks deleted
-            # Asynchronous file saving tasks
+            # Asynchronous file saving tasks (Synchronous file saving tasks deleted)
             # Define a callback function to be executed after saving
             def on_save_complete(success, message, backup_path=None):
                 self._save_in_progress = False
 
                 # UI Feedback for success or failure
-                from qgis.core import Qgis
-                from qgis.utils import iface
-
                 if success:
-                    # Display success message in UI
-                    iface.messageBar().pushMessage(
+                    MessageManager.show_success(
                         "Saved Successfully",
-                        message,
-                        level=Qgis.Success,
-                        duration=5
+                        message
                     )
-
                     # Display backup file information
                     if backup_path:
-                        iface.messageBar().pushMessage(
-                            "Backup file created",
-                            f"path: {backup_path}",
-                            level=Qgis.Info,
-                            duration=8
+                        MessageManager.show_info(
+                            "Backup Created",
+                            f"Backup file: {backup_path}"
                         )
 
                     # Change Notification Triggered
                     self.dataChanged.emit()
 
-                    #if hasattr(self, 'cacheInvalidate'):
-                        #self.cacheInvalidate()
-
-                    # Explicit Layer Update
-                    # Maybe not necessary
+                    # Explicit Layer Update (Maybe not necessary)
                     try:
                         layers = QgsProject.instance().mapLayersByName(self.type_layer_name)
                         if layers:
                             layers[0].triggerRepaint()
-                            print(f"Triggered repaint for layer: {self.type_layer_name}")
-                    except Exception as e:
-                        print(f"Warning: Could not trigger layer repaint: {str(e)}")
+                    except Exception as e2:
+                        MessageManager.show_warning(
+                            "Display Update Failed",
+                            f"Could not refresh layer display: {str(e2)}"
+                        )
                 else:
-                    # Display failure message to UI
-                    iface.messageBar().pushMessage(
-                        "Save failed",
-                        message,
-                        level=Qgis.Critical,
-                        duration=10
+                    MessageManager.show_error(
+                        "Save Failed",
+                        message
                     )
 
             # Start asynchronous save
             self.update_geodata_in_json_async(on_save_complete)
-            # Notify that the save operation has started
-            return True
+            return True     # Notify that the save operation has started
 
         except Exception as e:
-            self.pushError(f"Failed to change geometries: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            MessageManager.show_error(
+                "Geometry Update Failed",
+                f"Could not update geometries: {str(e)}"
+            )
             return False
 
 
@@ -515,23 +482,27 @@ class PandapowerProvider(QgsVectorDataProvider):
 
             # Create new dataframe in separate variable (prevent Race Condition)
             new_df = self._create_updated_dataframe()
-            if new_df is None:  # In this case renderer might receive empty data
-                print("⚠️ DataFrame creation failed!")
 
             # Replace at once after validation (Atomic Operation)
             if new_df is not None and not new_df.empty:
-                # Replace only when successfully created
-                # self.fields_list = None  # Initialize field cache
                 self.df = new_df  # Replace with new dataframe
             else:
                 # Keep existing data in case of failure
-                print(f"⚠️ Provider {self.uri}: New data creation failed, keeping existing data")
+                MessageManager.show_warning(
+                    "Data Update Failed",
+                    f"Layer '{self.type_layer_name}' could not update with latest network changes. "
+                    f"The layer may show outdated data. Try removing and re-adding the layer."
+                )
 
         except Exception as e:
             print(f"❌ Provider {self.uri}: Update failed - {str(e)}")
-            # Attempt to restore original state when error occurs
+            MessageManager.show_error(
+                "Update Error",
+                f"Failed to update data for layer '{self.type_layer_name}': {str(e)}. "
+                f"The layer may show outdated or incorrect data."
+            )
             if 'old_net' in locals():
-                self.net = old_net
+                self.net = old_net      # Attempt to restore original state when error occurs
 
 
     def _create_updated_dataframe(self):
@@ -547,18 +518,11 @@ class PandapowerProvider(QgsVectorDataProvider):
             df_network_type = getattr(self.net, self.network_type)
             df_res_network_type = getattr(self.net, f'res_{self.network_type}')
 
-            if df_network_type is None:
-                print(f"⚠️ {self.network_type} data not found")
-                return None
-
             # Check calculation results
             has_result_data = (df_res_network_type is not None and
-                               not df_res_network_type.empty and
-                               len(df_res_network_type) > 0)
+                               not df_res_network_type.empty and len(df_res_network_type) > 0)
 
             if has_result_data:
-                print("✅ Calculation results available! Using existing method")
-
                 # vn_kv filtering (existing logic)
                 if hasattr(self, 'vn_kv') and self.vn_kv is not None:
                     if self.network_type == 'bus':
@@ -574,7 +538,7 @@ class PandapowerProvider(QgsVectorDataProvider):
                 new_df = pd.merge(df_network_type, df_res_network_type,
                                   left_index=True, right_index=True, how='left', suffixes=('', '_res'))
             else:
-                print("⚠️ No calculation results! Using new method")
+                # No calculation results! Using new method
                 new_df = df_network_type.copy()
 
                 # Add empty result columns
@@ -589,8 +553,6 @@ class PandapowerProvider(QgsVectorDataProvider):
             return new_df
 
         except Exception as e:
-            import traceback
-            traceback.print_exc()
             return None
 
 
@@ -604,14 +566,10 @@ class PandapowerProvider(QgsVectorDataProvider):
             callback: Function to be called after saving is complete.
                 on_save_complete(success, message, backup_path)
         """
-        # Do not process new requests if a save operation is already in progress
         if self._save_in_progress:
-            from qgis.utils import iface
-            from qgis.core import Qgis
-            iface.messageBar().pushMessage(
+            MessageManager.show_info(
                 "Notify",
-                "A save operation is already in progress. Please try again later.",
-                level=Qgis.Info
+                "A save operation is already in progress. Please try again later."
             )
             return
         else:
@@ -629,8 +587,6 @@ class PandapowerProvider(QgsVectorDataProvider):
 
             def run(self):
                 try:
-                    import pandapower as pp
-                    import os
                     import shutil
                     from datetime import datetime
 
@@ -643,11 +599,10 @@ class PandapowerProvider(QgsVectorDataProvider):
                     backup_path = f"{original_path}.{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak"
                     try:
                         shutil.copy2(original_path, backup_path)
-                        print(f"The backup file has been created: {backup_path}")
                     except Exception as e:
-                        print(f"An error occurred while creating the backup file: {str(e)}")
                         # if backup creation failure non-critical and want to proceed
                         #backup_path = ""
+                        self.saveCompleted.emit(False, f"Failed to create backup file: {str(e)}", "")
                         return
 
                     # Load original network from json file
@@ -682,10 +637,7 @@ class PandapowerProvider(QgsVectorDataProvider):
                         self.saveCompleted.emit(False, error_msg, backup_path)
 
                 except Exception as e:
-                    import traceback
-                    error_msg = f"An error occurred while updating geodata: {str(e)}"
-                    traceback.print_exc()
-                    self.saveCompleted.emit(False, error_msg, "")
+                    self.saveCompleted.emit(False, f"An error occurred while updating geodata: {str(e)}", "")
 
         # Create a thread for saving
         self._save_thread = SaveThread(self)
@@ -715,8 +667,6 @@ class PandapowerProvider(QgsVectorDataProvider):
             return True
 
         try:
-            import pandapower as pp
-            import os
             import shutil
             from datetime import datetime
 
@@ -763,7 +713,6 @@ class PandapowerProvider(QgsVectorDataProvider):
             # Save updated network to json
             try:
                 pp.to_json(original_net, original_path)
-                print(f"Changed coordinates of {original_path} is successfully saved.")
                 return True
             except PermissionError:
                 self.pushError(f"Cannot reach to {original_path}. The file may opened in another program or required permissions.")
@@ -774,10 +723,9 @@ class PandapowerProvider(QgsVectorDataProvider):
 
         except Exception as e:
             self.pushError(f"Error occurred while updating geodata: {str(e)}")
-            import traceback
-            traceback.print_exc()
             return False
 
+    # =============================================================================================
 
     def changeAttributeValues(self, attr_map):
         """
@@ -791,14 +739,8 @@ class PandapowerProvider(QgsVectorDataProvider):
         """
         # Check if an existing save operation is in progress
         if self._save_in_progress:
-            from qgis.utils import iface
-            from qgis.core import Qgis
-            iface.messageBar().pushMessage(
-                "Notification",
-                "The previous save operation is still in progress. Please try again after it is completed.",
-                level=Qgis.Warning,
-                duration=5
-            )
+            MessageManager.show_warning(
+                "Notification", "Previous save operation is still running. Please try again after it is completed.")
             return False
 
         try:
@@ -815,73 +757,46 @@ class PandapowerProvider(QgsVectorDataProvider):
 
                     # 2. Check if field is editable
                     if not self.is_field_editable(field_name):
-                        print(f"⚠️ Field '{field_name}' is read-only, skipping")
-                        continue
+                        continue    # Skip read-only field
 
                     # 3. Validate critical fields BEFORE applying changes
                     validation_error = self._validate_field_value(field_name, new_value, feature_id)
                     if validation_error:
                         validation_errors.append(validation_error)
-                        continue  # Skip this invalid change
+                        continue    # Skip this invalid change
 
                     # 4. Update self.df (cache for Attribute Table)
                     if feature_id in self.df.index:
                         self.df.at[feature_id, field_name] = new_value
-                        print(f"✅ Updated self.df[{feature_id}]['{field_name}'] = {new_value}")
 
                     # 5. Update self.net (root data source)
                     df_network_type = getattr(self.net, self.network_type)
                     if feature_id in df_network_type.index:
                         df_network_type.at[feature_id, field_name] = new_value
-                        print(f"✅ Updated net.{self.network_type}[{feature_id}]['{field_name}'] = {new_value}")
 
                     # Track modified feature
                     modified_features.add(feature_id)
 
             # Show validation errors to user
             if validation_errors:
-                from qgis.utils import iface
-                from qgis.core import Qgis
                 error_msg = "\n".join(validation_errors[:5])  # Show first 5 errors
                 if len(validation_errors) > 5:
                     error_msg += f"\n... and {len(validation_errors) - 5} more errors"
-
-                iface.messageBar().pushMessage(
-                    "⚠️ Validation Error",
-                    f"Some changes were rejected:\n{error_msg}",
-                    level=Qgis.Warning,
-                    duration=10
-                )
+                MessageManager.show_warning("Validation Error", f"Some changes were rejected:\n{error_msg}")
 
             # If no valid changes were made, return early
             if not modified_features:
-                print("⚠️ No valid attribute changes to save")
                 return False
 
             # Callback function to be executed after saving
             def on_save_complete(success, message, backup_path=None):
                 self._save_in_progress = False
 
-                from qgis.core import Qgis
-                from qgis.utils import iface
-
                 if success:
                     # Display success message
-                    iface.messageBar().pushMessage(
-                        "✅ Saved Successfully",
-                        message,
-                        level=Qgis.Success,
-                        duration=5
-                    )
-
-                    # Display backup file information
+                    MessageManager.show_success("Saved Successfully", message)
                     if backup_path:
-                        iface.messageBar().pushMessage(
-                            "💾 Backup file created",
-                            f"path: {backup_path}",
-                            level=Qgis.Info,
-                            duration=8
-                        )
+                        MessageManager.show_info("Backup Created", f"Backup file: {backup_path}")
 
                     # Notify QGIS that data changed
                     self.dataChanged.emit()
@@ -891,16 +806,13 @@ class PandapowerProvider(QgsVectorDataProvider):
                         layers = QgsProject.instance().mapLayersByName(self.type_layer_name)
                         if layers:
                             layers[0].triggerRepaint()
-                            print(f"🔄 Triggered repaint for layer: {self.type_layer_name}")
-                    except Exception as e:
-                        print(f"⚠️ Warning: Could not trigger layer repaint: {str(e)}")
+                    except Exception as e2:
+                        MessageManager.show_warning(
+                            "Display Update Failed", f"Could not refresh layer display: {str(e2)}")
                 else:
-                    # Display failure message
-                    iface.messageBar().pushMessage(
-                        "❌ Save failed",
-                        message,
-                        level=Qgis.Critical,
-                        duration=10
+                    MessageManager.show_error(
+                        "Save Failed",
+                        message
                     )
 
             # Start asynchronous save
@@ -908,9 +820,8 @@ class PandapowerProvider(QgsVectorDataProvider):
             return True
 
         except Exception as e:
-            self.pushError(f"❌ Failed to change attributes: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            MessageManager.show_error(
+                "Attribute Update Failed", f"Could not update changed attributes: {str(e)}")
             return False
 
 
@@ -994,9 +905,7 @@ class PandapowerProvider(QgsVectorDataProvider):
             from_vn_kv = self.net.bus.loc[from_bus, 'vn_kv']
             to_vn_kv = self.net.bus.loc[to_bus, 'vn_kv']
             if from_vn_kv != to_vn_kv:
-                print(f"⚠️ Warning: Voltage level mismatch "
-                      f"({from_vn_kv} kV vs {to_vn_kv} kV) for line {from_bus}->{to_bus}")
-                # Note: This is just a warning, not a validation error
+                return f"⚠️ Warning: Voltage level mismatch ({from_vn_kv} kV vs {to_vn_kv} kV) for line {from_bus}->{to_bus}"
 
         return None
 
@@ -1039,15 +948,9 @@ class PandapowerProvider(QgsVectorDataProvider):
             callback: Function to be called after saving is complete.
                       Signature: on_save_complete(success, message, backup_path)
         """
-        # Do not process new requests if a save operation is already in progress
         if self._save_in_progress:
-            from qgis.utils import iface
-            from qgis.core import Qgis
-            iface.messageBar().pushMessage(
-                "Notify",
-                "A save operation is already in progress. Please try again later.",
-                level=Qgis.Info
-            )
+            MessageManager.show_warning(
+                "Notification", "A save operation is already in progress. Please try again later.")
             return
         else:
             self._save_in_progress = True
@@ -1064,8 +967,6 @@ class PandapowerProvider(QgsVectorDataProvider):
 
             def run(self):
                 try:
-                    import pandapower as pp
-                    import os
                     import shutil
                     from datetime import datetime
 
@@ -1078,9 +979,7 @@ class PandapowerProvider(QgsVectorDataProvider):
                     backup_path = f"{original_path}.{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak"
                     try:
                         shutil.copy2(original_path, backup_path)
-                        print(f"The backup file has been created: {backup_path}")
                     except Exception as e:
-                        print(f"An error occurred while creating the backup file: {str(e)}")
                         self.saveCompleted.emit(False, f"Failed to create backup: {str(e)}", "")
                         return
 
@@ -1097,7 +996,6 @@ class PandapowerProvider(QgsVectorDataProvider):
                     # Update the original network's data with modified attributes
                     original_df = getattr(original_net, self.provider.network_type)
 
-                    # ✨✨✨ 추가: 새로운 rows를 모을 리스트 초기화
                     new_rows = []
 
                     # Copy modified rows to original network
@@ -1108,54 +1006,29 @@ class PandapowerProvider(QgsVectorDataProvider):
                             for col in current_df.columns:
                                 if col in original_df.columns:
                                     original_df.at[idx, col] = current_df.at[idx, col]
-                        # 새 row를 리스트에 수집
+                        # Append newly added rows
                         else:
                             new_rows.append(current_df.loc[idx])
 
-                    # for 루프 종료 후, 한번에 concat 수행
+                    # Run concat at once after for loop
                     if new_rows:
                         new_df = pd.DataFrame(new_rows)
                         updated_df = pd.concat([original_df, new_df], ignore_index=False)
                         setattr(original_net, self.provider.network_type, updated_df)
-                        # 로컬 변수도 업데이트 (라인 1111-1113에서 사용하기 때문)
+                        # Update local variable too
                         original_df = getattr(original_net, self.provider.network_type)
-                        print(f"✅ Added {len(new_rows)} new rows in single operation")
-
-                    # # 삭제된 rows 처리 (deleteFeatures 지원)
-                    # # current_df에는 없지만 original_df에는 있는 인덱스 = 삭제된 요소
-                    # deleted_indices = original_df.index.difference(current_df.index)
-                    # if len(deleted_indices) > 0:
-                    #     original_df.drop(deleted_indices, inplace=True, errors='ignore')
-                    #     print(f"✅ Removed {len(deleted_indices)} deleted row(s) from {self.provider.network_type}")
-                    #
-                    #     # res_ DataFrame에서도 삭제
-                    #     res_table_name = f'res_{self.provider.network_type}'
-                    #     if hasattr(original_net, res_table_name):
-                    #         original_res_df = getattr(original_net, res_table_name)
-                    #         if original_res_df is not None and not original_res_df.empty:
-                    #             deleted_res_indices = original_res_df.index.intersection(deleted_indices)
-                    #             if len(deleted_res_indices) > 0:
-                    #                 original_res_df.drop(deleted_res_indices, inplace=True, errors='ignore')
-                    #                 print(
-                    #                     f"✅ Removed {len(deleted_res_indices)} deleted row(s) from {res_table_name}")
 
                     # Save the updated network to JSON
                     try:
                         pp.to_json(original_net, original_path)
-                        success_msg = f"Attribute changes have been saved: {original_path}"
-                        self.saveCompleted.emit(True, success_msg, backup_path)
+                        self.saveCompleted.emit(True, f"Attribute changes have been saved: {original_path}", backup_path)
                     except PermissionError:
-                        error_msg = f"Cannot access the file. It may be open in another program or you don't have write permissions: {original_path}"
-                        self.saveCompleted.emit(False, error_msg, backup_path)
+                        self.saveCompleted.emit(False, f"Cannot access the file. It may be open in another program or you don't have write permissions: {original_path}", backup_path)
                     except Exception as e:
-                        error_msg = f"An error occurred while saving file: {str(e)}"
-                        self.saveCompleted.emit(False, error_msg, backup_path)
+                        self.saveCompleted.emit(False, f"An error occurred while saving file: {str(e)}", backup_path)
 
                 except Exception as e:
-                    import traceback
-                    error_msg = f"An error occurred while updating attributes: {str(e)}"
-                    traceback.print_exc()
-                    self.saveCompleted.emit(False, error_msg, "")
+                    self.saveCompleted.emit(False, f"An error occurred while updating attributes: {str(e)}", "")
 
         # Create a thread for saving
         self._save_thread = SaveThread(self)
@@ -1183,13 +1056,8 @@ class PandapowerProvider(QgsVectorDataProvider):
         """
         # Check if another save operation is in progress
         if self._save_in_progress:
-            from qgis.utils import iface
-            from qgis.core import Qgis
-            iface.messageBar().pushMessage(
-                "Operation in Progress",
-                "Another save operation is in progress. Please try again later.",
-                level=Qgis.Info
-            )
+            MessageManager.show_warning(
+                "Notification", "Another save operation is in progress. Please try again later.")
             return
         else:
             self._save_in_progress = True
@@ -1206,8 +1074,6 @@ class PandapowerProvider(QgsVectorDataProvider):
 
             def run(self):
                 try:
-                    import pandapower as pp
-                    import os
                     import shutil
                     from datetime import datetime
 
@@ -1220,9 +1086,7 @@ class PandapowerProvider(QgsVectorDataProvider):
                     backup_path = f"{original_path}.{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak"
                     try:
                         shutil.copy2(original_path, backup_path)
-                        print(f"✅ Backup file created: {backup_path}")
                     except Exception as e:
-                        print(f"❌ Error creating backup: {str(e)}")
                         self.saveCompleted.emit(False, f"Failed to create backup: {str(e)}", "")
                         return
 
@@ -1231,21 +1095,14 @@ class PandapowerProvider(QgsVectorDataProvider):
                     # Any modifications (like cascade deletions) are already applied to it
                     try:
                         pp.to_json(self.provider.net, original_path)
-                        success_msg = f"Entire network saved: {original_path}"
-                        self.saveCompleted.emit(True, success_msg, backup_path)
-                        print(f"✅ Entire network saved to JSON")
+                        self.saveCompleted.emit(True, f"Entire network saved: {original_path}", backup_path)
                     except PermissionError:
-                        error_msg = f"Cannot access the file. It may be open in another program: {original_path}"
-                        self.saveCompleted.emit(False, error_msg, backup_path)
+                        self.saveCompleted.emit(False, f"Cannot access the file. It may be open in another program: {original_path}", backup_path)
                     except Exception as e:
-                        error_msg = f"Error saving file: {str(e)}"
-                        self.saveCompleted.emit(False, error_msg, backup_path)
+                        self.saveCompleted.emit(False, f"Error saving file: {str(e)}", backup_path)
 
                 except Exception as e:
-                    import traceback
-                    error_msg = f"Error saving entire network: {str(e)}"
-                    traceback.print_exc()
-                    self.saveCompleted.emit(False, error_msg, "")
+                    self.saveCompleted.emit(False, f"Error saving entire network: {str(e)}", "")
 
         # Create a thread for saving
         self._save_thread = SaveThread(self)
@@ -1257,17 +1114,15 @@ class PandapowerProvider(QgsVectorDataProvider):
         # Start thread
         self._save_thread.start()
 
-
     # ===============================================================================
-
 
     def addFeatures(self, features, flags=None):
         """
         Add new features to the pandapower network.
         Validates feature data, creates corresponding pandapower elements,
         and updates the NetworkContainer.
-
-        Note: This method follows the PyQGIS convention where C++ reference parameters
+        Note:
+            This method follows the PyQGIS convention where C++ reference parameters
             (marked with SIP_INOUT) are returned as part of a tuple in Python.
         Args:
             features: List of QgsFeature objects to add
@@ -1279,20 +1134,16 @@ class PandapowerProvider(QgsVectorDataProvider):
         """
         # Check if save operation is in progress
         if self._save_in_progress:
-            from qgis.utils import iface
-            from qgis.core import Qgis
-            iface.messageBar().pushMessage(
-                "Notification",
-                "A save operation is in progress. Please try again later.",
-                level=Qgis.Warning,
-                duration=5
-            )
+            MessageManager.show_warning("Notification", "A save operation is in progress. Please try again later.")
             return (False, [])
 
         # Pre-validation - Check if file can be saved BEFORE processing
         if not self._validate_can_save():
-            print("❌ addFeatures aborted: Pre-validation failed")
-            return (False, [])  # QGIS will keep features in buffer (no commit)
+            MessageManager.show_error(
+                "Add Features Failed",
+                "Cannot add features: File validation failed. The file may be inaccessible or locked."
+            )
+            return (False, [])      # QGIS will keep features in buffer (no commit)
 
         try:
             validation_errors = []
@@ -1318,20 +1169,12 @@ class PandapowerProvider(QgsVectorDataProvider):
                 if not validation_errors:
                     features_to_add.append(feature)
 
-            # Show validation errors if any
             if validation_errors:
-                from qgis.utils import iface
-                from qgis.core import Qgis
                 error_msg = "\n".join(validation_errors[:5])
                 if len(validation_errors) > 5:
                     error_msg += f"\n... and {len(validation_errors) - 5} more errors"
-
-                iface.messageBar().pushMessage(
-                    "Validation Error",
-                    f"Cannot add features due to validation errors:\n{error_msg}",
-                    level=Qgis.Critical,
-                    duration=10
-                )
+                MessageManager.show_error(
+                    "Validation Error", f"Cannot add features due to validation errors:\n{error_msg}")
                 return (False, [])
 
             # Add features to pandapower network
@@ -1350,108 +1193,78 @@ class PandapowerProvider(QgsVectorDataProvider):
                     added_features.append(feature)
 
             if not added_indices:
-                print("No features were added to pandapower network")
+                MessageManager.show_error(
+                    "Add Features Failed", "No features were added to the network. Features may have failed validation.")
                 return (False, [])
 
-            # net.bus와 net.res_bus에서 해당 row 가져오기
+            # Bring the newly added row from net.bus and net.res_bus
             df_network_type = getattr(self.net, self.network_type)
             df_res_network_type = getattr(self.net, f'res_{self.network_type}')
 
             new_rows = []
 
-            # 각 새 feature를 self.df에 추가
+            # Append new feature to self.df
             for idx in added_indices:
-                # 새 row 구성
                 bus_row = df_network_type.loc[idx]
 
-                # res가 있으면 merge
+                # Merge if res exist
                 if idx in df_res_network_type.index:
                     res_row = df_res_network_type.loc[idx]
-                    # 두 Series를 합치기
+                    # Concat two Series
                     new_row = pd.concat([bus_row, res_row])
                 else:
                     new_row = bus_row
-                    # res 컬럼들을 None으로 추가
+                    # Add res columns as None
                     for col in df_res_network_type.columns:
                         new_row[col] = None
 
-                # pp_type, pp_index 추가
+                # Add pp_type, pp_index
                 new_row_dict = new_row.to_dict()
                 new_row_dict['pp_type'] = self.network_type
                 new_row_dict['pp_index'] = idx
 
-                # 🎯 NEW: 리스트에 append (DataFrame 생성은 나중에)
+                # Append new rows to list
                 new_rows.append(new_row_dict)
-                # # DataFrame에 추가
-                # new_row_df = pd.DataFrame([new_row_dict], index=[idx])
-                # self.df = pd.concat([self.df, new_row_df], ignore_index=False)
 
-                print(f"✅ Prepared row {idx} for adding to self.df")
-
-            # 🎯🔥 NEW: 한번에 concat (O(n*m) → O(n+m) 성능 개선)
+            # concat at once (O(n*m) → O(n+m))
             if new_rows:
                 new_df = pd.DataFrame(new_rows, index=added_indices)
                 self.df = pd.concat([self.df, new_df], ignore_index=False)
-                print(f"✅ Added {len(new_rows)} rows to self.df in single concat operation")
 
             # Save to JSON file asynchronously
             def on_save_complete(success, message, backup_path=None):
                 self._save_in_progress = False
 
-                from qgis.core import Qgis
-                from qgis.utils import iface
-
                 if success:
-                    iface.messageBar().pushMessage(
-                        "Features Added",
-                        f"Added {len(added_indices)} feature(s) and saved to file",
-                        level=Qgis.Success,
-                        duration=5
-                    )
-
-                    # 💾✅ NEW: 저장 성공 후 NetworkContainer 업데이트 (changeGeometry/AttributeValues 패턴)
-                    network_data = {
-                        'net': self.net,
-                        'vn_kv': self.vn_kv,
-                        'type_layer_name': self.type_layer_name,
-                        'network_type': self.network_type,
-                        'current_crs': self.current_crs
-                    }
-                    NetworkContainer.register_network(self.uri, network_data)
-                    print("✅ NetworkContainer updated after successful save")
+                    MessageManager.show_success(
+                        "Features Added", f"Added {len(added_indices)} feature(s) and saved to file.")
+                    NetworkContainer.register_network(self.uri, self.network_data)
 
                     # Trigger data change notification
                     self.dataChanged.emit()
 
                 else:
-                    iface.messageBar().pushMessage(
+                    MessageManager.show_error(
                         "⚠️ Save Failed - Features added to memory but NOT Saved to File",
-                        f"Features: {added_indices} Reason: {message}\n",
-                        level=Qgis.Critical,
-                        duration=0
+                        f"Features: {added_indices} Reason: {message}\n"
                     )
-
 
             # Async run
             self.update_attributes_in_json_async(on_save_complete)
             return (True, features)
 
         except Exception as e:
-            self.pushError(f"Failed to add features: {str(e)}")
+            MessageManager.show_error("Add Features Failed", f"Failed to add features: {str(e)}")
             self._save_in_progress = False  # Reset flag on error
-            import traceback
-            traceback.print_exc()
             return (False, [])
 
 
     def _update_feature_readonly_attributes(self, feature, idx):
         """
         Update read-only field attributes with actual values from pandapower network.
-
         This is called after creating a new element in pandapower to ensure that:
-        1. Feature attributes match the actual data in self.net
-        2. Dialog DefaultValues (which are just hints) don't overwrite real data
-
+            1. Feature attributes match the actual data in self.net
+            2. Dialog DefaultValues (which are just hints) don't overwrite real data
         Args:
             feature: QgsFeature to update
             idx: Index of the element in pandapower network
@@ -1460,13 +1273,11 @@ class PandapowerProvider(QgsVectorDataProvider):
             # Get the actual row from pandapower network
             df = getattr(self.net, self.network_type)
             if idx not in df.index:
-                print(f"⚠️ Index {idx} not found in {self.network_type} dataframe")
                 return
 
             row = df.loc[idx]
 
             # Update read-only fields with actual values
-            updated_fields = []
             for field in self.fields():
                 field_name = field.name()
 
@@ -1483,14 +1294,9 @@ class PandapowerProvider(QgsVectorDataProvider):
 
                         # Update feature attribute
                         feature.setAttribute(field_idx, value)
-                        updated_fields.append(f"{field_name}={value}")
-
-            print(f"✅ Updated read-only attributes for feature {idx}: {', '.join(updated_fields)}")
 
         except Exception as e:
-            print(f"⚠️ Error updating feature attributes for {idx}: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            pass
 
 
     def _get_layer(self):
@@ -1504,7 +1310,6 @@ class PandapowerProvider(QgsVectorDataProvider):
                 return layers[0]
             return None
         except Exception as e:
-            print(f"Error getting layer: {str(e)}")
             return None
 
 
@@ -1525,42 +1330,36 @@ class PandapowerProvider(QgsVectorDataProvider):
             # Try to get layer from QgsProject
             layer = self._get_layer()
             if layer is None:
-                # Layer not yet available, will retry later
-                return
+                return      # Layer not yet available, will retry later
             
             # Set flag to avoid recursion
             self._form_setup_done = True
 
             config = layer.editFormConfig()
-            #field_names = [f.name() for f in self.fields()]
             field_names = [f.name() for f in self.fields_list]
 
-            # ➕➕➕ 새로 추가: Form Layout 설정 (line ~1586 이전에 삽입)
+            # Set Form Layout
             config.setLayout(QgsEditFormConfig.TabLayout)
             root = config.invisibleRootContainer()
-            root.clear()  # 기존 필드들 제거
-            # ➕ result DataFrame 가져오기
+            root.clear()  # Clear existing fields
+            # Get result DataFrame
             df_res = getattr(self.net, f'res_{self.network_type}', None)
-            # ➕➕➕ 새로 추가 끝
 
             # Configure each field
             for field_name in field_names:
-                #field_idx = self.fields().indexOf(field_name)
                 field_idx = self.fields_list.indexOf(field_name)
                 if field_idx < 0:
                     continue
 
-                # ➕➕➕ 새로 추가: 숨길 필드 필터링
-                # pp_index와 result 컬럼은 Form에 추가하지 않음 (= 숨김)
+                # Filter fields to hide (pp_index, result columns)
                 if field_name == 'pp_index':
                     continue
                 if df_res is not None and field_name in df_res.columns:
                     continue
 
-                # ➕ Form에 필드 추가 (표시할 필드만)
+                # Add fields to Form to display
                 element = QgsAttributeEditorField(field_name, field_idx, root)
                 root.addChildElement(element)
-                # ➕➕➕ 새로 추가 끝
 
                 # Configure read-only fields with default values
                 if not self.is_field_editable(field_name):
@@ -1580,20 +1379,15 @@ class PandapowerProvider(QgsVectorDataProvider):
 
                         # Set default value definition
                         layer.setDefaultValueDefinition(
-                            field_idx,
-                            QgsDefaultValue(default_expr, applyOnUpdate=False)
-                        )
-                        print(f"✅ Set default value for '{field_name}': {default_expr}")
+                            field_idx, QgsDefaultValue(default_expr, applyOnUpdate=False))
 
                 # Configure editable fields (widgets & constraints)
                 else:
                     # Configure widget type
                     if field_name == 'in_service':
-                        # Boolean fields → CheckBox
                         layer.setEditorWidgetSetup(field_idx, QgsEditorWidgetSetup('CheckBox', {}))
 
                     elif field_name in ['from_bus', 'to_bus', 'from_junction', 'to_junction']:
-                        # Bus/Junction references → TextEdit (numeric input)
                         layer.setEditorWidgetSetup(field_idx, QgsEditorWidgetSetup('TextEdit', {}))
 
                     elif field_name == 'type' and self.network_type == 'bus':
@@ -1649,20 +1443,16 @@ class PandapowerProvider(QgsVectorDataProvider):
             # Apply configuration
             layer.setEditFormConfig(config)
 
-            # 🔷 3. Set Table View as default (not Form View)
+            # 3. Set Table View as default (not Form View)
             from qgis.core import QgsAttributeTableConfig
             table_config = layer.attributeTableConfig()
             table_config.setActionWidgetStyle(QgsAttributeTableConfig.ButtonList)
             table_config.update(layer.fields())
             layer.setAttributeTableConfig(table_config)
 
-            print(f"✅ Attribute form configured for {self.network_type}")
-
         except Exception as e:
             self._form_setup_done = False
-            print(f"Error setting up attribute form: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            pass
 
 
     def _get_default_value_for_form(self, field_name):
@@ -1675,7 +1465,6 @@ class PandapowerProvider(QgsVectorDataProvider):
             Default value to display in the form dialog (string, int, float, or None)
         """
         if field_name == 'pp_type':
-            # Return actual network type
             return self.network_type
 
         elif field_name == 'pp_index':
@@ -1684,11 +1473,9 @@ class PandapowerProvider(QgsVectorDataProvider):
             return int(next_idx)
 
         elif field_name == 'vn_kv' and self.network_type in ['bus', 'line']:
-            # Return actual voltage level from layer
             return float(self.vn_kv)
 
         elif field_name == 'pn_bar' and self.network_type in ['junction', 'pipe']:
-            # Return actual pressure level from layer
             return float(self.pn_bar)
 
         elif field_name == 'geo':
@@ -1696,7 +1483,6 @@ class PandapowerProvider(QgsVectorDataProvider):
             return "(auto-generated)"
 
         # Other read-only fields - res columns
-        #return None
         return "(needs runpp)"
 
 
@@ -1728,24 +1514,20 @@ class PandapowerProvider(QgsVectorDataProvider):
 
             # Check if res table exists
             if not hasattr(self.net, res_table_name):
-                print(f"Warning: {res_table_name} does not exist in network")
                 return False
 
             res_df = getattr(self.net, res_table_name)
 
             # Check if res_df is None (shouldn't happen with pandapower, but defensive)
             if res_df is None:
-                print(f"Warning: {res_table_name} is None (unexpected)")
                 return False
 
             # Check if res_df has columns (structure exists)
             if len(res_df.columns) == 0:
-                print(f"Warning: {res_table_name} has no columns")
                 return False
 
             # Check if row already exists (safety check)
             if idx in res_df.index:
-                print(f"Info: {res_table_name}[{idx}] already exists, skipping")
                 return True
 
             # Create empty row with all columns as NaN
@@ -1758,14 +1540,9 @@ class PandapowerProvider(QgsVectorDataProvider):
 
             # Update the network's res dataframe
             setattr(self.net, res_table_name, updated_res)
-
-            print(f"✅ Added empty {res_table_name} row for index {idx}")
             return True
 
         except Exception as e:
-            print(f"❌ Error adding empty res row for {self.network_type}[{idx}]: {str(e)}")
-            import traceback
-            traceback.print_exc()
             return False
 
 
@@ -1779,8 +1556,6 @@ class PandapowerProvider(QgsVectorDataProvider):
             int or None: Index of created element in pandapower network, or None if failed
         """
         try:
-            import pandapower as pp
-
             # Extract geometry
             geometry = feature.geometry()
 
@@ -1791,14 +1566,13 @@ class PandapowerProvider(QgsVectorDataProvider):
                 if self.is_field_editable(field_name):
                     value = feature.attribute(field_name)
 
-                    # 🔧 FIX: QVariant를 Python 값으로 변환
-                    if hasattr(value, 'isNull'):  # QVariant 객체인 경우
+                    # Convert QVariant to Python value
+                    if hasattr(value, 'isNull'):  # If QVariant object
                         if value.isNull():
                             value = None
                         else:
-                            value = value.value()  # Python native 타입으로 변환
-
-                    # 빈 문자열이나 'NULL' 문자열을 None으로 정규화
+                            value = value.value()  # Convert to Python native type
+                    # '' or 'NULL' -> None (QVariant -> python type)
                     if isinstance(value, str):
                         value = value.strip()
                         if value == '' or value.upper() == 'NULL':
@@ -1806,72 +1580,32 @@ class PandapowerProvider(QgsVectorDataProvider):
 
                     # Skip None/NULL values - let pandapower use defaults
                     if value is not None and not pd.isna(value):
-                        # 🌟🌟🌟 CHANGED: QGIS field type 대신 DataFrame dtype 사용
-                        # BEFORE: field_type = field.type()
-                        # BEFORE: if field_type == QMetaType.Double:
-                        #
-                        # AFTER: DataFrame의 실제 dtype 확인
+                        # Check actual dtype of DataFrame
                         df_network_type = getattr(self.net, self.network_type)
-
-                        # 🔍 DEBUG: 타입 변환 전 상태 출력
-                        print(f"🔍 Field: {field_name}, Value: {repr(value)}, Type: {type(value)}")
-
-                        # 🌟 NEW: Check if field exists in DataFrame and get its dtype
+                        # Check if field exists in DataFrame and get its dtype
                         if field_name in df_network_type.columns:
                             dtype = df_network_type[field_name].dtype
-                            print(f"  → DataFrame dtype: {dtype}")
-
                             try:
-                                # 🌟🌟🌟 CHANGED: QMetaType 비교 → pandas dtype 체크
-                                # BEFORE: if field_type == QMetaType.Double or field_type == QMetaType.Float:
-                                # AFTER:  if pd.api.types.is_float_dtype(dtype):
+                                # Check pandas dtype
                                 if pd.api.types.is_float_dtype(dtype):
-                                    # Convert to float (e.g., '123' → 123.0)
-                                    print(f"  → Converting to float")
-                                    value = float(value)
-
-                                # 🌟🌟🌟 CHANGED: QMetaType 비교 → pandas dtype 체크
-                                # BEFORE: elif field_type == QMetaType.Int or field_type == QMetaType.LongLong:
-                                # AFTER:  elif pd.api.types.is_integer_dtype(dtype):
+                                    value = float(value)    # Convert to float (e.g., '123' → 123.0)
                                 elif pd.api.types.is_integer_dtype(dtype):
-                                    # Convert to int (e.g., '123' → 123)
-                                    print(f"  → Converting to int")
-                                    value = int(value)
-
-                                # 🌟🌟🌟 CHANGED: QMetaType 비교 → pandas dtype 체크
-                                # BEFORE: elif field_type == QMetaType.Bool:
-                                # AFTER:  elif pd.api.types.is_bool_dtype(dtype):
+                                    value = int(value)      # Convert to int (e.g., '123' → 123)
                                 elif pd.api.types.is_bool_dtype(dtype):
-                                    # Convert to bool (e.g., 'True' → True)
-                                    print(f"  → Converting to bool")
-                                    if isinstance(value, str):
+                                    if isinstance(value, str):  # Convert to bool (e.g., 'True' → True)
                                         value = value.lower() in ['true', '1', 'yes']
                                     else:
                                         value = bool(value)
-                                else:
-                                    # String or other types - no conversion needed
-                                    print(f"  → No conversion (string or other type)")
-
-                            # 🌟🌟🌟 CHANGED: 에러 메시지 수정
-                            # BEFORE: print(f"⚠️ Warning: Could not convert {field_name}={value} to {field_type}, skipping")
-                            # AFTER:  print(f"⚠️ Warning: Could not convert {field_name}={value} to {dtype}, skipping")
                             except (ValueError, TypeError) as e:
-                                print(f"⚠️ Warning: Could not convert {field_name}={value} to {dtype}, skipping")
                                 continue
-                        else:
-                            # 🌟 NEW: Field not in DataFrame 처리 추가
-                            print(f"  → Field not in DataFrame, keeping as-is")
-
-                        print(f"  ✅ After conversion: {repr(value)}, Type: {type(value)}")
                         attributes[field_name] = value
 
             # Create element based on network type
-            if self.network_type == 'bus':
-                # Required: name, vn_kv
+            if self.network_type == 'bus':  # Required: name, vn_kv
                 name = attributes.pop('name', f'Bus_{self._get_next_index()}')
                 type_val = attributes.pop('type', 'b')
                 in_service = attributes.pop('in_service', True)
-                # In attributes remains now kwargs
+                # In attributes[] remains now kwargs
 
                 # Create bus with required parameters
                 idx = pp.create_bus(
@@ -1957,13 +1691,10 @@ class PandapowerProvider(QgsVectorDataProvider):
                     })
                     self.net.line.at[idx, 'geo'] = geo_json
 
-                # 🌟🌟🌟 NEW: vn_kv 동기화 로직 추가 (전체 블록 신규)
+                # Use vn_kv of from_bus
                 if from_bus in self.net.bus.index:
                     from_vn_kv = self.net.bus.loc[from_bus, 'vn_kv']
                     self.net.line.at[idx, 'vn_kv'] = from_vn_kv
-                    print(f"✅ Set line.vn_kv = {from_vn_kv} kV (from bus {from_bus})")
-
-                print(f"Created line {idx}: {from_bus} -> {to_bus}, {length_km} km")
                 return idx
 
             else:
@@ -1972,8 +1703,6 @@ class PandapowerProvider(QgsVectorDataProvider):
 
         except Exception as e:
             self.pushError(f"Error adding feature to pandapower: {str(e)}")
-            import traceback
-            traceback.print_exc()
             return None
 
 
@@ -1982,38 +1711,27 @@ class PandapowerProvider(QgsVectorDataProvider):
         🛡️ PRE-VALIDATION: Validate that file can be saved before processing features.
         Checks file existence, write permissions, and file lock status.
         Shows user-friendly error messages if validation fails.
-
         Returns:
             bool: True if safe to proceed with save, False if save will fail
         """
-        from qgis.core import Qgis
-        from qgis.utils import iface
-        import os
-
         json_path = self.uri_parts.get('path', '')
 
         # 🛡️ Check 1: File exists
         if not json_path or not os.path.exists(json_path):
-            iface.messageBar().pushMessage(
-                "❌ Cannot Save",
+            MessageManager.show_error(
+                "Cannot Save",
                 f"File not found: {json_path}\n"
-                f"The file may have been moved or deleted.",
-                level=Qgis.Critical,
-                duration=0
+                f"The file may have been moved or deleted."
             )
-            print(f"❌ Pre-validation failed: File not found - {json_path}")
             return False
 
         # 🛡️ Check 2: Write permission
         if not os.access(json_path, os.W_OK):
-            iface.messageBar().pushMessage(
-                "❌ Cannot Save",
+            MessageManager.show_error(
+                "Cannot Save",
                 f"No write permission: {json_path}\n"
-                f"Check file properties (read-only?) or contact administrator.",
-                level=Qgis.Critical,
-                duration=0
+                f"Check file properties (read-only?) or contact administrator."
             )
-            print(f"❌ Pre-validation failed: No write permission - {json_path}")
             return False
 
         # 🛡️ Check 3: File not locked (by other program)
@@ -2022,34 +1740,25 @@ class PandapowerProvider(QgsVectorDataProvider):
             with open(json_path, 'r+') as f:
                 pass
         except PermissionError:
-            iface.messageBar().pushMessage(
-                "❌ Cannot Save",
+            MessageManager.show_error(
+                "Cannot Save",
                 f"File is locked: {json_path}\n"
-                f"Close any programs using this file (Excel, text editor, etc.)",
-                level=Qgis.Critical,
-                duration=0
+                f"Close any programs using this file (Excel, text editor, etc.)"
             )
-            print(f"❌ Pre-validation failed: File is locked - {json_path}")
             return False
+
         except Exception as e:
             # Unexpected error during file check
-            iface.messageBar().pushMessage(
-                "❌ Cannot Save",
+            MessageManager.show_error(
+                "Cannot Save",
                 f"Cannot access file: {json_path}\n"
-                f"Error: {str(e)}",
-                level=Qgis.Critical,
-                duration=0
+                f"Error: {str(e)}"
             )
-            print(f"❌ Pre-validation failed: Unexpected error - {str(e)}")
             return False
 
-        # ✅ All checks passed
-        print(f"✅ Pre-validation passed: {json_path}")
         return True
 
-
     # =========================================================================
-
 
     def deleteFeatures(self, fids):
         """
@@ -2064,54 +1773,30 @@ class PandapowerProvider(QgsVectorDataProvider):
         """
         # Check if another save operation is in progress
         if self._save_in_progress:
-            from qgis.utils import iface
-            from qgis.core import Qgis
-            iface.messageBar().pushMessage(
-                "Operation in Progress",
-                "Another save operation is in progress. Please wait until it completes.",
-                level=Qgis.Warning,
-                duration=5
-            )
+            MessageManager.show_warning(
+                "Notification", "Another save operation is in progress. Please try again later.")
             return False
 
         # Pre-validation: Check if file can be saved
         if not self._validate_can_save():
-            print("❌ deleteFeatures aborted: Pre-validation failed")
             return False
 
         try:
             # Route to appropriate deletion method based on network type
-            if self.network_type == 'bus':
-                # Bus deletion: Check connections and ask for user confirmation
+            if self.network_type == 'bus':  # Bus deletion: Check connections and ask for user confirmation
                 return self._delete_buses_with_confirmation(fids)
-
-            elif self.network_type == 'line':
-                # Line deletion: Direct deletion (safe, no dependencies)
+            elif self.network_type == 'line':   # Line deletion: Direct deletion (safe, no dependencies)
                 return self._delete_lines(fids)
-
             elif self.network_type in ['junction', 'pipe']:
-                # Not yet implemented
-                from qgis.utils import iface
-                from qgis.core import Qgis
-                iface.messageBar().pushMessage(
-                    "Not Implemented",
-                    f"Delete feature is not yet implemented for {self.network_type}.\n"
-                    f"This feature will be available in a future version.",
-                    level=Qgis.Info,
-                    duration=5
-                )
-                print(f"⚠️ deleteFeatures not implemented for {self.network_type}")
+                MessageManager.show_info(
+                    "Not Implemented", f"Delete feature is not yet implemented for {self.network_type}.")
                 return False
-
             else:
-                # Unknown network type
                 self.pushError(f"Unsupported network type for deleteFeatures: {self.network_type}")
                 return False
 
         except Exception as e:
-            self.pushError(f"Failed to delete features: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            MessageManager.show_error("Delete Features Failed", f"Failed to delete features: {str(e)}")
             return False
 
 
@@ -2196,9 +1881,6 @@ class PandapowerProvider(QgsVectorDataProvider):
             }
 
         except Exception as e:
-            self.pushError(f"❌ Error getting connected elements info: {str(e)}")
-            import traceback
-            traceback.print_exc()
             # Return empty result on error
             return {
                 'in_qgis_layers': {},
@@ -2225,46 +1907,31 @@ class PandapowerProvider(QgsVectorDataProvider):
             invalid_buses = [bid for bid in bus_ids if bid not in self.net.bus.index]
 
             if invalid_buses:
-                print(f"⚠️ Skipping invalid bus IDs: {invalid_buses}")
-
+                MessageManager.show_warning(
+                    "Some Features Not deleted",
+                    f"Could not find {len(invalid_buses)} bus(es) (IDs: {invalid_buses[:5]}) in network.\n"
+                    f"Continuing with {len(valid_buses)} valid bus(es)."
+                )
             if not valid_buses:
-                print("❌ No valid buses to delete")
                 return False
 
-            # Get information about connected elements
-            print(f"🔍 Checking connections for {len(valid_buses)} bus(es): {valid_buses}")
+            # Get information about connected elements of busses
             connected_info = self._get_bus_connected_elements_info(valid_buses)
 
-            print(f"📊 Found {connected_info['total_count']} connected element(s)")
-            if connected_info['in_qgis_layers']:
-                print(f"   📍 In QGIS: {connected_info['in_qgis_layers']}")
-            if connected_info['in_network_only']:
-                print(f"   📄 In JSON: {connected_info['in_network_only']}")
-
-            # Show confirmation dialog to user
+            # Show confirmation dialog to user (user cancel)
             if not self._show_delete_confirmation_dialog(valid_buses, connected_info):
-                print("❌ User cancelled deletion")
                 return False
-
-            # User confirmed - proceed with deletion
-            print(f"🗑️ Deleting {len(valid_buses)} bus(es): {valid_buses}")
 
             # Use pandapower's drop_buses function (handles connected elements automatically)
             pp.drop_buses(self.net, valid_buses, drop_elements=True)
-            print(f"✅ Deleted from pandapower network (bus + connected elements)")
 
-            # Update self.df (merged DataFrame used by QGIS)
-            # Remove deleted buses from self.df
+            # Update self.df - Remove deleted buses from self.df
             self.df.drop(valid_buses, inplace=True, errors='ignore')
-            print(f"✅ Deleted {len(valid_buses)} bus(es) from self.df")
 
             # Save to JSON file and perform post-processing
             return self._save_deletions(valid_buses, 'bus')
 
         except Exception as e:
-            self.pushError(f"Failed to delete buses: {str(e)}")
-            import traceback
-            traceback.print_exc()
             return False
 
 
@@ -2287,30 +1954,25 @@ class PandapowerProvider(QgsVectorDataProvider):
             invalid_lines = [lid for lid in line_ids if lid not in self.net.line.index]
 
             if invalid_lines:
-                print(f"⚠️ Skipping invalid line IDs: {invalid_lines}")
-
+                MessageManager.show_warning(
+                    "Some Features Not deleted",
+                    f"Could not find {len(invalid_lines)} line(es) (IDs: {invalid_lines[:5]}) in network.\n"
+                    f"Continuing with {len(valid_lines)} valid bus(es)."
+                )
             if not valid_lines:
-                print("❌ No valid lines to delete")
                 return False
-
-            print(f"🗑️ Deleting {len(valid_lines)} line(s): {valid_lines}")
 
             # Use pandapower's drop_lines function
             # This also removes geodata and connected switches automatically
             pp.drop_lines(self.net, valid_lines)
-            print(f"✅ Deleted from pandapower network (line + geodata + switches)")
 
-            # Update self.df (merged DataFrame used by QGIS)
+            # Update self.df
             self.df.drop(valid_lines, inplace=True, errors='ignore')
-            print(f"✅ Deleted {len(valid_lines)} line(s) from self.df")
 
             # Save to JSON file and perform post-processing
             return self._save_deletions(valid_lines, 'line')
 
         except Exception as e:
-            self.pushError(f"Failed to delete lines: {str(e)}")
-            import traceback
-            traceback.print_exc()
             return False
 
 
@@ -2322,8 +1984,6 @@ class PandapowerProvider(QgsVectorDataProvider):
         (e.g., bus deletion causes line deletion).
         """
         try:
-            from qgis.core import QgsProject
-
             my_path = self.uri_parts.get('path')
             my_vn_kv = self.vn_kv if hasattr(self, 'vn_kv') else None
 
@@ -2347,9 +2007,7 @@ class PandapowerProvider(QgsVectorDataProvider):
                 layer.triggerRepaint()
 
         except Exception as e:
-            self.pushError(f"❌ Error in _notify_affected_layers(): {str(e)}")
-            import traceback
-            traceback.print_exc()
+            pass
 
 
     def _save_deletions(self, deleted_ids, element_type):
@@ -2367,28 +2025,13 @@ class PandapowerProvider(QgsVectorDataProvider):
             def on_save_complete(success, message, backup_path=None):
                 self._save_in_progress = False
 
-                from qgis.core import Qgis
-                from qgis.utils import iface
-
                 if success:
-                    iface.messageBar().pushMessage(
-                        "✅ Features Deleted",
-                        f"Deleted {len(deleted_ids)} {element_type}(s) and saved to file",
-                        level=Qgis.Success,
-                        duration=5
+                    MessageManager.show_success(
+                        "Features Deleted",
+                        f"Deleted {len(deleted_ids)} {element_type}(s) and saved to file"
                     )
 
-                    # Update NetworkContainer (sync all providers viewing this network)
-                    network_data = {
-                        'net': self.net,
-                        'vn_kv': self.vn_kv if hasattr(self, 'vn_kv') else None,
-                        'pn_bar': self.pn_bar if hasattr(self, 'pn_bar') else None,
-                        'type_layer_name': self.type_layer_name,
-                        'network_type': self.network_type,
-                        'current_crs': self.current_crs
-                    }
-                    NetworkContainer.register_network(self.uri, network_data)
-                    print("✅ NetworkContainer updated after successful deletion")
+                    NetworkContainer.register_network(self.uri, self.network_data)
 
                     # Direct layer notification - Trigger data change notification (refreshes QGIS display)
                     # Notify self first
@@ -2397,14 +2040,12 @@ class PandapowerProvider(QgsVectorDataProvider):
                     if element_type == 'bus':
                         self._notify_affected_layers()
                 else:
-                    iface.messageBar().pushMessage(
-                        "⚠️ Save Failed",
+                    MessageManager.show_error(
+                        "Save Failed",
                         f"Elements deleted from memory but NOT saved to file!\n"
                         f"Deleted {element_type}(s): {deleted_ids}\n"
                         f"Reason: {message}\n\n"
-                        f"You can restore from backup file if needed.",
-                        level=Qgis.Critical,
-                        duration=0
+                        f"You can restore from backup file if needed."
                     )
 
             # Start async save operation
@@ -2413,9 +2054,7 @@ class PandapowerProvider(QgsVectorDataProvider):
             return True
 
         except Exception as e:
-            self.pushError(f"Failed to initiate save operation: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            MessageManager.show_error("Save Failed", f"Failed to initiate save operation: {str(e)}")
             self._save_in_progress = False  # Reset flag on error
             return False
 
@@ -2519,9 +2158,6 @@ class PandapowerProvider(QgsVectorDataProvider):
                 return False
 
         except Exception as e:
-            self.pushError(f"❌ Error showing confirmation dialog: {str(e)}")
-            import traceback
-            traceback.print_exc()
             return False    # On error, default to cancel (safe choice)
 
     # =========================================================================
@@ -2562,7 +2198,6 @@ class PandapowerProvider(QgsVectorDataProvider):
         crs = QgsCoordinateReferenceSystem.fromEpsgId(int(self.current_crs))
         if not crs.isValid():
             raise ValueError(f"CRS ID {self.current_crs} is not valid.")
-        print(f"CRS is valid: {crs.authid()}") # Debugging
         return crs
 
 
@@ -2619,10 +2254,9 @@ class PandapowerProvider(QgsVectorDataProvider):
                                     min_y = min(min_y, y)
                                     max_y = max(max_y, y)
                                 else:
-                                    print(f"Incorrect coordinate format for {self.network_type}.")
-                                    return
+                                    return QgsRectangle()   # Return empty rectangle on incorrect coordinate format
                         except Exception as e:
-                            print(f"Warning: Bus/Junction data of index {idx} failed to produce: {str(e)}")
+                            continue    # Skip invalid geometry, continue with others
 
                 # Line geometry (line/pipe)
                 elif self.network_type in ['line', 'pipe']:
@@ -2641,21 +2275,18 @@ class PandapowerProvider(QgsVectorDataProvider):
                                             max_y = max(max_y, y)
                                         else:
                                             print(f"Incorrect coordinate format for {self.network_type}.")
-                                            return
+                                            return QgsRectangle()   # Return empty rectangle on incorrect coordinate format
                         except Exception as e:
-                            print(f"Warning: Lind/Pipe data of index {idx} failed to produce: {str(e)}")
+                            continue  # Skip invalid geometry, continue with others
 
                 # Check if the valid range has been calculated
                 if min_x == float('inf') or max_x == float('-inf'):
-                    print("Warning: extent is infinite.")
                     return QgsRectangle()
 
                 return QgsRectangle(min_x, min_y, max_x, max_y)
 
             except Exception as e:
                 self.pushError(f"Error calculating extent: {str(e)}")
-                import traceback
-                traceback.print_exc()
                 return QgsRectangle()
 
 
