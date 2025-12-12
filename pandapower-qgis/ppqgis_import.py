@@ -55,7 +55,7 @@ def power_network(parent, file) -> None:
     # get crs of QGIS project
     current_crs = int(QgsProject.instance().crs().authid().split(':')[1])
 
-    parent.installer_func()
+    # parent.installer_func()
     import pandapower as pp
     import geo  # in a future version this should be replaced by pandapower.plotting.geo as geo
     import geojson

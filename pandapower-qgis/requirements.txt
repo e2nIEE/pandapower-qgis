@@ -5,3 +5,4 @@ numba
 pyproj
 geojson
 lightsim2grid
+scipy

@@ -329,7 +329,7 @@ class ppqgis:
                 if layer_item.child(ind).checkState(0) == QtCore.Qt.CheckState.Checked:
                     selected_layers.append(layer_lookup[ind])
 
-            self.installer_func()
+            # self.installer_func()
 
             if self.dlg_export.power:
                 power_network(self, selected_layers)
@@ -358,7 +358,7 @@ class ppqgis:
             selected)[0]
 
         if filename:
-            self.installer_func()
+            # self.installer_func()
 
             with open(filename, 'r') as file:
                 content = file.read()
