@@ -84,8 +84,52 @@ If this option is not selected, the different voltage levels are colored in diff
 | parallel            | integer | 1             |                                   |
 | max_loading_percent | float   |               |                                   |
 | pp_index            | integer | None          | these might change after export   |
+
 <br>
-To change the feature's position through mouse clicks:  
+
+#### Supported Editing Options
+This plugin supports standard QGIS editing operations with **pandapower-specific validations**:
+- Add features (bus/line nodes)
+- Delete features (bus/line nodes)
+- Modify attributes values
+- Move features (geometry changes)
+
+<br>
+
+#### ⚠️ Important Notes
+
+**Bus Deletion (Cascade Delete)**
+- Deleting a bus will **cascade delete** all connected elements (lines, loads, transformers, generators, etc.)
+- A confirmation dialog shows all affected elements before deletion
+- This action cannot be undone (a timestamped backup is created automatically)
+
+**Line Creation Requirements**
+- Required fields: `from_bus`, `to_bus`, `length_km`
+- `std_type` field:
+  - If provided: Standard line type name (e.g., "NAYY 4x50 SE")
+  - If NULL or empty: You **must** provide `r_ohm_per_km`, `x_ohm_per_km`, `c_nf_per_km`
+
+**Validation Rules**
+- `from_bus`/`to_bus` must reference existing bus IDs
+- Physical parameters (`length_km`, `r_ohm_per_km`, etc.) must be positive
+- Required fields cannot be NULL
+
+**Automatic Backup**
+- All changes automatically create a timestamped backup file (`.bak`)
+- Format: `network.json.20231215_143022.bak`
+
+**Async Save**
+- Changes are saved in the background (UI remains responsive)
+- Cannot edit while a save operation is in progress
+
+<br>
+
+#### How to use editing operation
+Add features / Delete features / Modify attribute values Operations are
+standard QGIS editing operations of point and line.  
+For general editing instructions, please refer to the [QGIS documentation](https://docs.qgis.org/latest/en/docs/user_manual/working_with_vector/editing_geometry_attributes.html).
+
+To **change the feature's geometry(position)** through mouse clicks needs to be explained:  
 
 ![move_feature_guide]
 
