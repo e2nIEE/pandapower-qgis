@@ -1,31 +1,30 @@
 # pandapower-qgis
 
-Plugin for interaction between QGis and pandapower or pandapipes Networks
+Plugin for interaction between QGis and pandapower Networks.
 
-Import and export of pandapower and pandapipes networks.
+Import and export of pandapower networks.
 
 ---
 
 ## Overview
 
-- [pandapower](#pandapower)
-  - [import from pandapower](#import-from-pandapower)
+- [Pandapower](#pandapower)
+  - [Import from pandapower](#import-from-pandapower)
   - [Editing the network](#editing-the-network-in-qgis)
-  - [export to pandapower](#export-to-pandapower)
-- [pandapipes](#pandapipes) 
-  - [import from pandapipes](#import-from-pandapipes)
-  - [Editing the network](#editing-the-network-in-qgis-1)
-  - [export to pandapipes](#export-to-pandapipes)
+  - [Run pandapower network](#run_pandapower_network)
+  - [Export to pandapower](#export-to-pandapower)
 
 ---
 
 ## pandapower
 
-### import from pandapower 
-![import icon][import_icon]
-
+### Import from pandapower 
+![import icon][import_icon]  
+This icon can be found in the menu.  
 The plugin can automatically detect if you are importing a pandapower
 or pandapipes network, it will show only relevant settings.
+
+![import_guide][import_guide]  
 
 #### • crs - coordinate reference system
 Selecting the appropriate crs is required as pandapower does
@@ -42,14 +41,9 @@ is executed before exporting any data.
 
 #### • color lines by load
 If this option is selected the network is coloured by load for each line individually.
-If not the different voltage levels are colored in different colors.
-
-#### • Select save folder
-If no folder is selected the network will be loaded into QGIS from memory.
-The network then can not be edited directly.
-If a folder is selected each layer will be saved there as a GeoJSON file and
-then loaded into QGIS. The network can then be edited directly from within QGIS.
-It is recommended to select a save folder.
+However, if this option is selected but the network's power was not calculated,
+the network will be grayed out.
+If this option is not selected, the different voltage levels are colored in different colors.
 
 ---
 
@@ -91,9 +85,89 @@ It is recommended to select a save folder.
 | max_loading_percent | float   |               |                                   |
 | pp_index            | integer | None          | these might change after export   |
 
-### export to pandapower
-![export icon][export_icon]
+<br>
 
+#### Supported Editing Options
+This plugin supports standard QGIS editing operations with **pandapower-specific validations**:
+- Add features (bus/line nodes)
+- Delete features (bus/line nodes)
+- Modify attributes values
+- Move features (geometry changes)
+
+<br>
+
+#### ⚠️ Important Notes
+
+**Bus Deletion (Cascade Delete)**
+- Deleting a bus will **cascade delete** all connected elements (lines, loads, transformers, generators, etc.)
+- A confirmation dialog shows all affected elements before deletion
+- This action cannot be undone (a timestamped backup is created automatically)
+
+**Line Creation Requirements**
+- Required fields: `from_bus`, `to_bus`, `length_km`
+- `std_type` field:
+  - If provided: Standard line type name (e.g., "NAYY 4x50 SE")
+  - If NULL or empty: You **must** provide `r_ohm_per_km`, `x_ohm_per_km`, `c_nf_per_km`
+
+**Validation Rules**
+- `from_bus`/`to_bus` must reference existing bus IDs
+- Physical parameters (`length_km`, `r_ohm_per_km`, etc.) must be positive
+- Required fields cannot be NULL
+
+**Automatic Backup**
+- All changes automatically create a timestamped backup file (`.bak`)
+- Format: `network.json.20231215_143022.bak`
+
+**Async Save**
+- Changes are saved in the background (UI remains responsive)
+- Cannot edit while a save operation is in progress
+
+<br>
+
+#### How to use editing operation
+Add features / Delete features / Modify attribute values Operations are
+standard QGIS editing operations of point and line.  
+For general editing instructions, please refer to the [QGIS documentation](https://docs.qgis.org/latest/en/docs/user_manual/working_with_vector/editing_geometry_attributes.html).
+
+To **change the feature's geometry(position)** through mouse clicks needs to be explained:  
+
+![move_feature_guide]
+
+click a layer to edit in Layers panel and activate layer editing mode
+![toggle_editing_icon].  
+Then select the Move Feature tool ![move_feature_icon].
+
+Click on the feature and then click on the desired location to change the feature's position.  
+Click ![toggle_editing_icon] once more to save the edit.  
+When the layer editing mode is deactivated, the changes can be saved,
+and a backup file will be created to preserve the previous data.
+
+---
+
+### Run pandapower load flow
+![run_icon][run_icon]  
+This icon can be found in the menu.  
+Here you can configure the options required for running pandapower network.  
+
+![run_guide]
+#### • RunPP Options
+- Function: Various run functions can be selected.
+- Parameter(**kwargs): You can directly input parameters in the following formats.
+	- key1=value1, key2=value2
+	- {'key1': 'value1', 'key2': value2}
+	- key1='value1', key2=value2
+- Note: Information about the runpp function and options can be found at the link below.
+    https://pandapower.readthedocs.io/en/latest/powerflow/ac.html
+- Note: If you enter an incorrect parameter name, the function will run with the default value for that parameter.
+- Network initialization method: auto, flat, results
+
+---
+
+### Export to pandapower
+![export icon][export_icon]  
+This icon can be found in the menu.
+
+![export_guide][export_guide]
 #### • Name
 This is optional. The name is set when creating the pandapower network
 
@@ -116,103 +190,12 @@ that have `pp_type` set to `bus` or `line`.
 
 ---
 
-## pandapipes
-
-### import from pandapipes
-![import icon][import_icon]
-
-The plugin can automatically detect if you are importing a pandapower
-or pandapipes network, it will show only relevant settings.
-
-#### • crs - coordinate reference system
-Selecting the appropriate crs is required as pandapipes does
-not store this information by default.
-
-The crs for the resulting GeoJSON is taken from the QGIS Project.
-GeoJSON has deprecated support for crs, WGS-84 is highly recommended.
-If a specific crs is preferred it is recommended to create a Project
-with that crs first and then import the network.
-
-#### • run pandapipes
-If this option is selected `pandapipes.runpp()`
-is executed before exporting any data.
-
-#### • color pipes by pressure
-If this option is selected the network is coloured by pressure for each line individually.
-If not the different pressure levels are colored in different colors.
-
-#### • Select save folder
-If no folder is selected the network will be loaded into QGIS from memory.
-The network then can not be edited directly.
-If a folder is selected each layer will be saved there as a GeoJSON file and
-then loaded into QGIS. The network can then be edited directly from within QGIS.
-It is recommended to select a save folder.
-
----
-
-### Editing the network in QGIS
-
-#### Required Attributes
-
-`junction`
-
-| name     | type  | comment                 |
-|----------|-------|-------------------------|
-| pn_bar   | float | fluid pressure in bar   |
-| tfluid_k | float | fluid temperature in °K |
-
-`pipe`
-
-| name       | type    | comment                     |
-|------------|---------|-----------------------------|
-| from_bus   | integer | pandapower id               |
-| to_bus     | integer | pandapower id               |
-| diameter_m | float   |                             |
-
-#### Optional Attributes
-
-`junction`
-
-| name       | type    | default value | comment                         |
-|------------|---------|---------------|---------------------------------|
-| height_m   | float   | 0             |                                 |
-| name       | string  | None          |                                 |
-| pp_index   | int     | None          | these might change after export |
-| in_service | boolean | True          |                                 |
-
-`pipe`
-
-| name             | type    | default value | comment                              |
-|------------------|---------|---------------|--------------------------------------|
-| length_km        | float   |               | if not present derived from QGIS     |
-| k_mm             | float   | 1.0           | pipe roughness                       |
-| loss_coefficient | float   | 0.0           | additional pressure loss coefficient |
-| sections         | integer | 1             | number of internal pipe sections     |
-| alpha_w_per_m2k  | float   | 0.0           | heat transfer coefficient            |
-| qext_w           | float   | 0.0           | external heat input                  |
-| text_k           | float   | 293           | ambient temperature of pipe          |
-| name             | string  | None          |                                      |
-| in_service       | boolean | True          |                                      |
-| pp_index         | integer | None          | these might change after export      |
-
-### export to pandapipes
-![export icon][export_icon]
-
-#### • Name
-This is optional. The name is set when creating the pandapower network
-
-#### • Fluid
-If the fluid is in the standard library this is used to create the pipes.
-If not the pipes are created using the properties from the attributes table.
-
-#### • add standard types
-If selected the pandapipes standard types are added to the
-network.
-
-#### • Select layers to export
-The plugin attempts to export all selected layers.
-It will export all features of vector layers
-that have `pp_type` set to `junction` or `pipe`.
-
 [import_icon]: ./pp_import.svg "import to QGIS"
 [export_icon]: ./pp_export.svg "export from QGIS"
+[run_icon]: ./pp.png "run pandapower network"
+[import_guide]: user_manual_image/import.png "how to import"
+[run_guide]: user_manual_image/run.png "how to run"
+[move_feature_guide]: user_manual_image/move_feature.png "how to move"
+[export_guide]: user_manual_image/export.png "how to export"
+[toggle_editing_icon]: user_manual_image/toggle_editing_icon.png "toggle editing icon"
+[move_feature_icon]: user_manual_image/move_feature_icon.png "move feature icon"
