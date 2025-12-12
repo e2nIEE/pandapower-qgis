@@ -1,6 +1,6 @@
 # pandapower-qgis
 
-Plugin for interaction between QGis and pandapower or pnadapipes Networks
+Plugin for interaction between QGis and pandapower or pandapipes Networks
 
 Import and export of pandapower and pandapipes networks.
 
