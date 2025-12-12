@@ -1,8 +1,6 @@
-pandapower~=3.0.0
-pandapipes
+pandapower==2.14.11
 geopandas
 numba
 pyproj
 geojson
 lightsim2grid
-scipy
