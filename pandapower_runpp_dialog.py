@@ -1,6 +1,6 @@
 import os
 
-from pandapower import runpm_tnep
+# from pandapower import runpm_tnep
 from qgis.PyQt import QtWidgets, QtCore
 from qgis.PyQt.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
                                  QLabel, QLineEdit, QSpinBox, QDoubleSpinBox,

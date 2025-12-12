@@ -37,7 +37,7 @@ deprecated=False
 # Since QGIS 3.8, a comma separated list of plugins to be installed
 # (or upgraded) can be specified.
 # Check the documentation for more information.
-#plugin_dependencies=pandapower==3.2.1
+plugin_dependencies=qpip
 
 Category of the plugin: Raster, Vector, Database or Web
 #category=Database
