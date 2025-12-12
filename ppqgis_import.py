@@ -26,8 +26,11 @@ import os.path
 from qgis.PyQt.QtGui import QColor
 from qgis.core import QgsProject, QgsVectorLayer, QgsApplication, \
     QgsGraduatedSymbolRenderer, QgsSingleSymbolRenderer, QgsRendererRange, QgsClassificationRange, \
-    QgsMarkerSymbol, QgsLineSymbol, QgsGradientColorRamp
+    QgsMarkerSymbol, QgsLineSymbol, QgsGradientColorRamp, QgsProviderRegistry, QgsProviderMetadata
 
+from .network_container import NetworkContainer
+from .pandapower_maptip import MapTipUtils
+from .renderer_utils import create_power_renderer, create_pipe_renderer
 
 # constants for color ramps
 BUS_LOW_COLOR = "#ccff00"  # lime
@@ -74,13 +77,20 @@ def power_network(parent, file) -> None:
     result = parent.dlg_import.exec_()
     # See if OK was pressed
     if result:
-        folder_name = parent.dlg_import.folderSelect.filePath()
-        as_file = True
-        if not folder_name:
-            as_file = False
+        # folder_name = parent.dlg_import.folderSelect.filePath()
+        # as_file = True
+        # if not folder_name:
+        #     as_file = False
         layer_name = parent.dlg_import.layerNameEdit.text()
         run_pandapower = parent.dlg_import.runpp.isChecked()
-        render = parent.dlg_import.gradRender.isChecked()
+        user_wants_render = parent.dlg_import.gradRender.isChecked()
+
+        # if res column is cleared, render off
+        has_result_data = (hasattr(net, 'res_bus') and
+                           net.res_bus is not None and
+                           not net.res_bus.empty and
+                           len(net.res_bus) > 0)
+
         try:
             crs = int(parent.dlg_import.projectionSelect.crs().authid().split(':')[1])
         except ValueError:
@@ -89,6 +99,10 @@ def power_network(parent, file) -> None:
         # run pandapower if selected
         if run_pandapower:
             pp.runpp(net)
+            has_result_data = (hasattr(net, 'res_bus') and
+                               net.res_bus is not None and
+                               not net.res_bus.empty and
+                               len(net.res_bus) > 0)
 
         root = QgsProject.instance().layerTreeRoot()
         # check if group exists
@@ -104,77 +118,46 @@ def power_network(parent, file) -> None:
         bus_color_ramp = QgsGradientColorRamp(QColor(BUS_LOW_COLOR), QColor(BUS_HIGH_COLOR))
         line_color_ramp = QgsGradientColorRamp(QColor(LINE_LOW_COLOR), QColor(LINE_HIGH_COLOR))
 
-        # Color lines by load/ buses by voltage
-        if render:
-            classification_methode = QgsApplication.classificationMethodRegistry().method("EqualInterval")
-
-            # generate symbology for bus layer
-            bus_target = "vm_pu"
-            min_target = "min_vm_pu"
-            max_target = "max_vm_pu"
-            # map value from its possible min/max to 0/100
-            classification_str = f'scale_linear("{bus_target}", 0.9, 1.1, 0, 100)'
-
-            bus_renderer = QgsGraduatedSymbolRenderer()
-            bus_renderer.setClassificationMethod(classification_methode)
-            bus_renderer.setClassAttribute(classification_str)
-            # add categories (10 categories, 10% increments)
-            for x in range(10):
-                low_bound = x * 10
-                high_bound = (x + 1) * 10 - .0001
-                if x == 9:  # fix for not including 100%
-                    high_bound = 100
-                bus_renderer.addClassRange(
-                    QgsRendererRange(
-                        QgsClassificationRange(f'class {low_bound}-{high_bound}', low_bound, high_bound),
-                        QgsMarkerSymbol()
-                    )
-                )
-            bus_renderer.updateColorRamp(bus_color_ramp)
-
-            # generate symbology for line layer
-            line_target = "loading_percent"
-
-            line_renderer = QgsGraduatedSymbolRenderer()
-            line_renderer.setClassificationMethod(classification_methode)
-            line_renderer.setClassAttribute(line_target)
-
-            # add categories (10 categories, 10% increments)
-            for x in range(10):
-                low_bound = x * 10
-                high_bound = (x + 1) * 10 - .0001
-                if x == 9:  # fix for not including 100%
-                    high_bound = 100
-                line_symbol = QgsLineSymbol()
-                line_symbol.setWidth(.6)
-                line_renderer.addClassRange(
-                    QgsRendererRange(
-                        QgsClassificationRange(f'class {low_bound}-{high_bound}', low_bound, high_bound),
-                        line_symbol
-                    )
-                )
-            line_renderer.updateColorRamp(line_color_ramp)
+        bus_renderer_by_load = None
+        line_renderer_by_load = None
+        if user_wants_render and has_result_data:
+            bus_renderer_by_load, line_renderer_by_load = create_power_renderer()
 
         # find min and max voltage. Used for finding color of symbols.
         max_kv = max(voltage_levels)
         min_kv = min(voltage_levels)
+        def map_to_range(x: float, xmin: float, xmax: float, min: float = 0.0, max: float = 1.0):
+            return (x - xmin) / (xmax - xmin) * (max - min) + min
+
         for vn_kv in voltage_levels:
             buses, lines = filter_by_voltage(net, vn_kv)
 
-            # Color layers by voltage level
-            if not render:
-                def map_to_range(x: float, xmin: float, xmax: float, min: float = 0.0, max: float = 1.0):
-                    return (x - xmin) / (xmax - xmin) * (max - min) + min
+            if user_wants_render and has_result_data:
+                # Case 1: User wants load-based coloring and res data is available
+                bus_renderer = bus_renderer_by_load
+                line_renderer = line_renderer_by_load
 
+            elif user_wants_render and not has_result_data:
+                # Case 2: User wants load-based coloring but res data is not available
                 bus_symbol = QgsMarkerSymbol()
+                bus_symbol.setColor(QColor("#808080"))  # gray
                 bus_renderer = QgsSingleSymbolRenderer(bus_symbol)
 
                 line_symbol = QgsLineSymbol()
                 line_symbol.setWidth(.6)
+                line_symbol.setColor(QColor("#808080"))  # gray
                 line_renderer = QgsSingleSymbolRenderer(line_symbol)
-                # set color of symbol based on vn_kv
+
+            else:
+                # Case 3 & 4: User wants voltage level-based coloring (regardless of res data availability)
+                bus_symbol = QgsMarkerSymbol()
                 bus_symbol.setColor(bus_color_ramp.color(map_to_range(vn_kv, min_kv, max_kv)))
+                bus_renderer = QgsSingleSymbolRenderer(bus_symbol)
+
+                line_symbol = QgsLineSymbol()
+                line_symbol.setWidth(.6)
                 line_symbol.setColor(line_color_ramp.color(map_to_range(vn_kv, min_kv, max_kv)))
+                line_renderer = QgsSingleSymbolRenderer(line_symbol)
 
             bus = {
                 'object': buses,
@@ -193,7 +176,8 @@ def power_network(parent, file) -> None:
                 if not obj['object']:
                     continue
                 type_layer_name = f'{layer_name}_{str(vn_kv)}_{obj["suffix"]}'
-                file_path = f'{folder_name}\\{type_layer_name}.geojson'
+                # file_path = f'{folder_name}\\{type_layer_name}.geojson'
+                '''
                 gj = geo.dump_to_geojson(net,
                                          nodes=obj['object'] if obj['suffix'] == 'bus' else False,
                                          branches=obj['object'] if obj['suffix'] == 'line' else False)
@@ -203,11 +187,41 @@ def power_network(parent, file) -> None:
                         file.close()
                     layer = QgsVectorLayer(file_path, type_layer_name, "ogr")
                 else:
-                    layer = QgsVectorLayer(geojson.dumps(gj), type_layer_name, "ogr")
+                    layer = QgsVectorLayer(geojson.dumps(gj), type_layer_name, "ogr")   # check, und dump to geojson auch 기존은 gj라는 데이터소스를 사용하여 레이어를 만들었으나 나는 레이어를 만들고 데이터를 추가하는 방식을 사용하였음 여기에서 차이가 발생하므로 
+                    '''
+
+                uri_parts = {
+                    "path": file,
+                    "network_type": obj["suffix"],
+                    "voltage_level": str(vn_kv),
+                    "geometry": "Point" if obj["suffix"] in ['bus', 'junction'] else "LineString",
+                    "epsg": str(current_crs),
+                }
+                provider_metadata = QgsProviderRegistry.instance().providerMetadata("PandapowerProvider")
+                uri = provider_metadata.encodeUri(uri_parts)
+
+                # Register network data to container
+                network_data = {
+                    'net': net,
+                    'vn_kv': vn_kv,
+                    'type_layer_name': type_layer_name,
+                    'network_type': obj['suffix'],
+                    'current_crs': current_crs
+                }
+                NetworkContainer.register_network(uri, network_data)
+
+                layer = QgsVectorLayer(uri, type_layer_name, "PandapowerProvider")
                 layer.setRenderer(obj['renderer'])
+
+                # Set field edit capabilities for changeAttributeValues() from pandapower_provider.py
+                configure_field_edit_permissions(layer, obj["suffix"])
+
                 # add layer to group
                 QgsProject.instance().addMapLayer(layer, False)
                 group.addLayer(layer)
+
+                # Add map tip setting
+                MapTipUtils.configure_map_tips(layer, vn_kv, obj["suffix"])
 
             if buses or lines:
                 # Move layers above TileLayer
@@ -218,6 +232,25 @@ def power_network(parent, file) -> None:
                     order.insert(0, order.pop())
                 root.setCustomLayerOrder(order)
 
+            try:
+                # Enable the global Map Tips setting
+                from qgis.PyQt.QtCore import QSettings
+                QSettings().setValue("qgis/enableMapTips", True)
+
+                # For safety, try using an action trigger
+                try:
+                    if not parent.iface.actionMapTips().isChecked():
+                        parent.iface.actionMapTips().trigger()
+                except:
+                    pass  # Ignore if the action is missing or inaccessible
+            except Exception as e:
+                parent.iface.messageBar().pushMessage(
+                    "Map Tips Error",
+                    f"An error occurred while enabling Map Tips: {str(e)}",
+                    level=Qgis.Critical,
+                    duration=5
+                )
+
 def pipes_network(parent, file):
     # get crs of QGIS project
     current_crs = int(QgsProject.instance().crs().authid().split(':')[1])
@@ -225,6 +258,30 @@ def pipes_network(parent, file):
     import pandapipes as pp
     import geo # in a future version this should be replaced by pandapower.plotting.geo as geo
     import geojson
+
+    try:
+        # Debug: preview file contents.
+        with open(file, 'r') as f:
+            content = f.read()
+            print(f"[DEBUG] File content preview (first 500 chars):")
+            print(content[:500])
+            print(f"[DEBUG] Contains 'pandapipesNet': {'pandapipesNet' in content}")
+    except Exception as e:
+        print(f"[DEBUG] Error reading file: {e}")
+
+    # Attempt actual loading
+    try:
+        net = pp.from_json(file)
+        print(f"[DEBUG] Successfully loaded pandapipes network")
+        print(f"[DEBUG] Network type: {type(net)}")
+        print(f"[DEBUG] Network keys: {list(net.keys()) if hasattr(net, 'keys') else 'No keys method'}")
+    except Exception as e:
+        print(f"[DEBUG] Error loading pandapipes network: {e}")
+        import traceback
+        traceback.print_exc()
+        #return
+        raise
+
     net = pp.from_json(file)
 
     parent.dlg_import.convert_to_pipes()
@@ -240,10 +297,10 @@ def pipes_network(parent, file):
     result = parent.dlg_import.exec_()
     # See if OK was pressed
     if result:
-        folder_name = parent.dlg_import.folderSelect.filePath()
-        as_file = True
-        if not folder_name:
-            as_file = False
+        # folder_name = parent.dlg_import.folderSelect.filePath()
+        # as_file = True
+        # if not folder_name:
+        #     as_file = False
         layer_name = parent.dlg_import.layerNameEdit.text()
         run_pandapipes = parent.dlg_import.runpp.isChecked()
         render = parent.dlg_import.gradRender.isChecked()
@@ -362,7 +419,8 @@ def pipes_network(parent, file):
                 if not obj['object']:
                     continue
                 type_layer_name = f'{layer_name}_{str(pn_bar)}_{obj["suffix"]}'
-                file_path = f'{folder_name}\\{type_layer_name}.geojson'
+                # file_path = f'{folder_name}\\{type_layer_name}.geojson'
+                '''
                 gj = geo.dump_to_geojson(net,
                                          nodes=obj['object'] if obj['suffix'] == 'junction' else False,
                                          branches=obj['object'] if obj['suffix'] == 'pipe' else False)
@@ -373,10 +431,38 @@ def pipes_network(parent, file):
                     layer = QgsVectorLayer(file_path, type_layer_name, "ogr")
                 else:
                     layer = QgsVectorLayer(geojson.dumps(gj), type_layer_name, "ogr")
+                '''
+
+                uri_parts = {
+                    "path": file,
+                    "network_type": obj["suffix"],
+                    "pressure_level": str(pn_bar),
+                    "geometry": "Point" if obj["suffix"] in ['bus', 'junction'] else "LineString",
+                    "epsg": str(current_crs),
+                }
+                provider_metadata = QgsProviderRegistry.instance().providerMetadata("PandapowerProvider")
+                uri = provider_metadata.encodeUri(uri_parts)
+
+
+                # Register network data to container
+                network_data = {
+                    'net': net,
+                    'pn_bar': pn_bar,
+                    'type_layer_name': type_layer_name,
+                    'network_type': obj['suffix'],
+                    'current_crs': current_crs
+                }
+                NetworkContainer.register_network(uri, network_data)
+
+                layer = QgsVectorLayer(uri, type_layer_name, "PandapowerProvider")
+
                 layer.setRenderer(obj['renderer'])
                 # add layer to group
                 QgsProject.instance().addMapLayer(layer, False)
                 group.addLayer(layer)
+
+                # Add map tip setting
+                MapTipUtils.configure_map_tips(layer, pn_bar, obj["suffix"])
 
             if junctions or pipes:
                 # Move layers above TileLayer
@@ -386,3 +472,53 @@ def pipes_network(parent, file):
                 if junctions and pipes:
                     order.insert(0, order.pop())
                 root.setCustomLayerOrder(order)
+
+            try:
+                from qgis.PyQt.QtCore import QSettings
+                QSettings().setValue("qgis/enableMapTips", True)
+
+                try:
+                    if not parent.iface.actionMapTips().isChecked():
+                        parent.iface.actionMapTips().trigger()
+                except:
+                    pass
+            except Exception as e:
+                parent.iface.messageBar().pushMessage(
+                    "Map Tips Error",
+                    f"An error occurred while enabling Map Tips: {str(e)}",
+                    level=Qgis.Critical,
+                    duration=5
+                )
+
+
+def configure_field_edit_permissions(layer, network_type):
+    """
+    Configure which fields are editable in the Attribute Table.
+    Uses the provider's logic to determine editability.
+    Args:
+        layer: QgsVectorLayer to configure
+        network_type: 'bus', 'line', 'junction', or 'pipe'
+    """
+    provider = layer.dataProvider()
+
+    # Check if provider has the is_field_editable method
+    if not hasattr(provider, 'is_field_editable'):
+        print(f"⚠️ Provider does not have is_field_editable method")
+        return
+
+    fields = layer.fields()
+    config = layer.editFormConfig()
+
+    for field in fields:
+        field_name = field.name()
+        field_index = layer.fields().indexFromName(field_name)
+
+        # Ask provider if this field is editable
+        is_editable = provider.is_field_editable(field_name)
+
+        if not is_editable:
+            # Set as read-only in the edit form
+            config.setReadOnly(field_index, True)
+            print(f"  → Set '{field_name}' as READ-ONLY")
+
+    layer.setEditFormConfig(config)

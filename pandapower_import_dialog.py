@@ -48,11 +48,11 @@ class ppImportDialog(QtWidgets.QDialog, FORM_CLASS):
         self.layerNameEdit.setText("pandapipesnet")
         self.runpp.setText(self.tr("Run pandapipes"))
         self.gradRender.setText(self.tr("color pipes by pressure"))
-        self.folderSelect.setDialogTitle(self.tr("Import pandapipes network - Select save folder:"))
+        # self.folderSelect.setDialogTitle(self.tr("Import pandapipes network - Select save folder:"))
 
     def convert_to_power(self):
         self.setWindowTitle(self.tr("Import pandapower network"))
         self.layerNameEdit.setText("pandapowernet")
         self.runpp.setText(self.tr("Run pandapower"))
         self.gradRender.setText(self.tr("color lines by load"))
-        self.folderSelect.setDialogTitle(self.tr("Import pandapower network - Select save folder:"))
+        # self.folderSelect.setDialogTitle(self.tr("Import pandapower network - Select save folder:"))

@@ -7,7 +7,7 @@
     <x>0</x>
     <y>0</y>
     <width>400</width>
-    <height>300</height>
+    <height>180</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -158,32 +158,32 @@
      </item>
     </layout>
    </item>
-   <item>
-    <widget class="QLabel" name="folderSelectLabel">
-     <property name="text">
-      <string comment="Select save folder:">Select save folder:</string>
-     </property>
-    </widget>
-   </item>
-   <item>
-    <widget class="QgsFileWidget" name="folderSelect">
-     <property name="fileWidgetButtonVisible">
-      <bool>true</bool>
-     </property>
-     <property name="fullUrl">
-      <bool>false</bool>
-     </property>
-     <property name="dialogTitle">
-      <string>Import pandapower network - Select save folder:</string>
-     </property>
-     <property name="storageMode">
-      <enum>QgsFileWidget::GetDirectory</enum>
-     </property>
-     <property name="relativeStorage">
-      <enum>QgsFileWidget::RelativeDefaultPath</enum>
-     </property>
-    </widget>
-   </item>
+<!--   <item>-->
+<!--    <widget class="QLabel" name="folderSelectLabel">-->
+<!--     <property name="text">-->
+<!--      <string comment="Select save folder:">Select save folder:</string>-->
+<!--     </property>-->
+<!--    </widget>-->
+<!--   </item>-->
+<!--   <item>-->
+<!--    <widget class="QgsFileWidget" name="folderSelect">-->
+<!--     <property name="fileWidgetButtonVisible">-->
+<!--      <bool>true</bool>-->
+<!--     </property>-->
+<!--     <property name="fullUrl">-->
+<!--      <bool>false</bool>-->
+<!--     </property>-->
+<!--     <property name="dialogTitle">-->
+<!--      <string>Import pandapower network - Select save folder:</string>-->
+<!--     </property>-->
+<!--     <property name="storageMode">-->
+<!--      <enum>QgsFileWidget::GetDirectory</enum>-->
+<!--     </property>-->
+<!--     <property name="relativeStorage">-->
+<!--      <enum>QgsFileWidget::RelativeDefaultPath</enum>-->
+<!--     </property>-->
+<!--    </widget>-->
+<!--   </item>-->
    <item>
     <spacer name="verticalSpacer">
      <property name="orientation">
