@@ -1,0 +1,7 @@
+pandapower~=3.4.0
+pandapipes
+geopandas
+numba
+pyproj
+geojson
+lightsim2grid

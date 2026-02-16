@@ -88,11 +88,11 @@ def dump_to_geojson(net, nodes=False, branches=False):
     """
     is_pandapower = net.__class__.__name__ == 'pandapowerNet'
     if is_pandapower:
-        node_geodata = net.bus_geodata
-        branch_geodata = net.line_geodata
+        node_geodata = net.bus.geo
+        branch_geodata = net.line.geo
     else:
-        node_geodata = net.junction_geodata
-        branch_geodata = net.pipe_geodata
+        node_geodata = net.junction.geo
+        branch_geodata = net.pipe.geo
 
     if not geojson_INSTALLED:
         soft_dependency_error(str(sys._getframe().f_code.co_name) + "()", "geojson")
@@ -125,7 +125,7 @@ def dump_to_geojson(net, nodes=False, branches=False):
         if isinstance(nodes, bool):
             iterator = node_geodata.iterrows()
         else:
-            iterator = node_geodata.loc[nodes].iterrows()
+            iterator = node_geodata.loc[list(nodes)].iterrows()
         for uid, row in iterator:
             if is_pandapower and row.coords is not None and not pd.isna(row.coords):
                 # [(x, y), (x2, y2)] start and end of bus bar
@@ -164,7 +164,7 @@ def dump_to_geojson(net, nodes=False, branches=False):
             # if all iterating over pipe
             iterator = net.line_geodata.iterrows() if is_pandapower else net.pipe.iterrows()
         else:
-            iterator = net.line_geodata.loc[branches].iterrows() if is_pandapower else net.pipe.loc[branches].iterrows()
+            iterator = net.line_geodata.loc[list(branches)].iterrows() if is_pandapower else net.pipe.loc[list(branches)].iterrows()
         for uid, row in iterator:
             if not is_pandapower:
                 coords = []
