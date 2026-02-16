@@ -6,7 +6,7 @@ from qgis.PyQt.QtCore import QMetaType
 import json
 import pandas as pd
 import pandapower as pp
-import pandapipes as ppi
+# import pandapipes as ppi
 import os
 from . import pandapower_feature_iterator, pandapower_feature_source
 from .network_container import NetworkContainer
