@@ -57,7 +57,7 @@ def power_network(parent, file) -> None:
 
     # parent.installer_func()
     import pandapower as pp
-    import geo  # in a future version this should be replaced by pandapower.plotting.geo as geo
+    import pandapower.plotting.geo as geo  # in a future version this should be replaced by pandapower.plotting.geo as geo
     import geojson
     net = pp.from_json(file)
 

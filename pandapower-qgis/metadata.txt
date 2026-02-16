@@ -4,7 +4,7 @@
 
 [general]
 name=pandapower QGis Plugin
-qgisMinimumVersion=3.0
+qgisMinimumVersion=3.44
 description=Plugin to work with pandapower or pandapipes networks
 version=0.0.3
 author=Fraunhofer IEE

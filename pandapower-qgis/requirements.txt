@@ -1,4 +1,4 @@
-pandapower==2.14.11
+pandapower~=3.4.0
 geopandas
 numba
 pyproj
