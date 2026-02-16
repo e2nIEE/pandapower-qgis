@@ -129,3 +129,4 @@ dmypy.json
 .pyre/
 .idea/
 *.zip
+pandapower-qgis/zip_build/
