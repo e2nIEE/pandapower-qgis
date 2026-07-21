@@ -38,7 +38,6 @@ from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, NULL
 # Initialize Qt resources from file resources.py
 from .resources import *
 # Import the code for the dialog
-from .pandapower_import_dialog import ppImportDialog
 from .pandapower_export_dialog import ppExportDialog
 from .pandapower_runpp_dialog import ppRunDialog
 from .pandapower_export_summary_dialog import ppExportSummaryDialog
@@ -71,12 +70,13 @@ class ppqgis:
         self.iface = iface
         # initialize plugin directory
         self.plugin_dir = os.path.dirname(__file__)
-        # initialize locale
-        locale = QSettings().value('locale/userLocale')[0:2]
+        # initialize locale. The setting is absent on a fresh QGIS profile, so
+        # it must not be sliced unconditionally.
+        locale = QSettings().value('locale/userLocale') or ''
         locale_path = os.path.join(
             self.plugin_dir,
             'i18n',
-            'pandapower_qgis_{}.qm'.format(locale))
+            'pandapower_qgis_{}.qm'.format(locale[0:2]))
 
         if os.path.exists(locale_path):
             self.translator = QTranslator()
@@ -89,15 +89,18 @@ class ppqgis:
 
         # Check if plugin was started the first time in current QGIS session
         # Must be set in initGui() to survive plugin reloads
-        self.first_start_import = None
         self.first_start_export = None
         self.first_start_runpp = None
-        self.dlg_import = None
         self.dlg_export = None
         self.dlg_runpp = None
         self.dlg_export_summary = None
         self.dir = None
         self.layer_id_dict = None
+        # Browser providers. References are held here because the registries
+        # take ownership on the C++ side (see register_browser_providers).
+        self.data_item_provider = None
+        self.data_item_gui_provider = None
+        self.source_select_provider = None
 
     def installer_func(self):
         plugin_dir = os.path.dirname(os.path.realpath(__file__))
@@ -222,7 +225,6 @@ class ppqgis:
         """Create the menu entries and toolbar icons inside the QGIS GUI."""
 
         icon_path = ':/plugins/pandapower_qgis/pp.svg'
-        import_icon_path = ':/plugins/pandapower_qgis/pp_import.svg'
         export_icon_path = ':/plugins/pandapower_qgis/pp_export.svg'
         runpp_icon_path = ':/plugins/pandapower_qgis/pp.svg'    # tmp
 
@@ -232,11 +234,10 @@ class ppqgis:
             callback=self.exprt,
             parent=self.iface.mainWindow())
 
-        self.add_action(
-            icon_path=import_icon_path,
-            text=self.tr(u'import from pandapower'),
-            callback=self.imprt,
-            parent=self.iface.mainWindow())
+        # Note: there is no longer an "import" action. A pandapower network is
+        # opened directly from the Browser panel or the Data Source Manager,
+        # and edits are written back to the same file. See
+        # docs/dataprovider_v2_plan.md.
 
         self.add_action(
             icon_path=runpp_icon_path,
@@ -244,10 +245,93 @@ class ppqgis:
             callback=self.runpp_action,
             parent=self.iface.mainWindow())
 
+        self.register_browser_providers()
+        self.connect_unsaved_changes_prompt()
+
         # will be set False in run()
-        self.first_start_import = True
         self.first_start_export = True
         self.first_start_runpp = True
+
+    def connect_unsaved_changes_prompt(self):
+        """Warn about networks with uncommitted changes before the project closes.
+
+        Edits live in the shared network until the layer's edit buffer is
+        committed, so closing a project can otherwise discard them silently.
+        """
+        from qgis.core import QgsProject
+
+        try:
+            QgsProject.instance().cleared.connect(self.warn_about_unsaved_networks)
+        except Exception as error:
+            print('Could not connect project-cleared signal: {}'.format(error))
+
+    def warn_about_unsaved_networks(self):
+        """Tell the user which networks still hold unwritten changes."""
+        from .network_session import NetworkSession
+
+        dirty = [session for session in NetworkSession.all_sessions()
+                 if session.dirty]
+        if not dirty:
+            return
+
+        from qgis.PyQt.QtWidgets import QMessageBox
+
+        paths = '\n'.join(session.path for session in dirty)
+        QMessageBox.warning(
+            self.iface.mainWindow() if self.iface else None,
+            self.tr('Unsaved pandapower changes'),
+            self.tr('These networks have changes that were never saved:\n\n'
+                    '{}\n\nThe changes were not written to disk.').format(paths),
+        )
+
+    def register_browser_providers(self):
+        """Register the Browser items and the Data Source Manager page.
+
+        All three registries take ownership of the provider on the C++ side, so
+        a Python reference is kept as well: without it the object can be garbage
+        collected while QGIS still holds a pointer to it.
+        """
+        from qgis.core import QgsApplication
+        from qgis.gui import QgsGui
+        from .pandapower_data_items import PandapowerDataItemProvider
+        from .pandapower_data_item_gui import PandapowerDataItemGuiProvider
+        from .pandapower_source_select import PandapowerSourceSelectProvider
+
+        self.data_item_provider = PandapowerDataItemProvider()
+        QgsApplication.dataItemProviderRegistry().addProvider(
+            self.data_item_provider)
+
+        self.data_item_gui_provider = PandapowerDataItemGuiProvider()
+        QgsGui.dataItemGuiProviderRegistry().addProvider(
+            self.data_item_gui_provider)
+
+        self.source_select_provider = PandapowerSourceSelectProvider()
+        QgsGui.sourceSelectProviderRegistry().addProvider(
+            self.source_select_provider)
+
+    def unregister_browser_providers(self):
+        """Remove the Browser and Data Source Manager providers again.
+
+        Must happen on unload, or reloading the plugin leaves QGIS holding
+        pointers into a module that no longer exists.
+        """
+        from qgis.core import QgsApplication
+        from qgis.gui import QgsGui
+
+        if self.data_item_provider is not None:
+            QgsApplication.dataItemProviderRegistry().removeProvider(
+                self.data_item_provider)
+            self.data_item_provider = None
+
+        if self.data_item_gui_provider is not None:
+            QgsGui.dataItemGuiProviderRegistry().removeProvider(
+                self.data_item_gui_provider)
+            self.data_item_gui_provider = None
+
+        if self.source_select_provider is not None:
+            QgsGui.sourceSelectProviderRegistry().removeProvider(
+                self.source_select_provider)
+            self.source_select_provider = None
 
     def unload(self):
         """Removes the plugin menu item and icon from QGIS GUI."""
@@ -256,6 +340,16 @@ class ppqgis:
                 self.tr(u'&pandapower QGIS Plugin'),
                 action)
             self.iface.removeToolBarIcon(action)
+
+        self.unregister_browser_providers()
+
+        from qgis.core import QgsProject
+
+        try:
+            QgsProject.instance().cleared.disconnect(
+                self.warn_about_unsaved_networks)
+        except (TypeError, RuntimeError):
+            pass  # Never connected, or already torn down
 
     def exprt(self):
         """Run method that performs all the real work"""
@@ -337,40 +431,6 @@ class ppqgis:
                 pipes_network(self, selected_layers)
 
 
-    def imprt(self):
-        """Run method that performs all the real work"""
-        from .ppqgis_import import power_network, pipes_network
-
-        # Create the dialog with elements (after translation) and keep reference
-        # Only create GUI ONCE in callback, so that it will only load when the plugin is started
-        if self.first_start_import:
-            self.first_start_import = False
-            self.dlg_import = ppImportDialog()
-
-        # Open file dialog showing json files and directories
-        filters = "all files ();;json files (*.json)"
-        selected = "json files (*.json)"
-        filename = QFileDialog.getOpenFileName(
-            None,
-            self.tr("Import pandapower or pandapipes network - Open File"),
-            self.dir,
-            filters,
-            selected)[0]
-
-        if filename:
-            # self.installer_func()
-
-            with open(filename, 'r') as file:
-                content = file.read()
-                if '"pandapowerNet"' in content:
-                    power_network(self, filename)
-                elif '"pandapipesNet"' in content:
-                    pipes_network(self, filename)
-                else:
-                    self.iface.messageBar().pushMessage(
-                        'The selected json file could not be loaded. Could not find "pandapowerNet" or "pandapipesNet"',
-                        level=Qgis.Critical
-                    )
 
 
     def runpp_action(self):
@@ -405,7 +465,7 @@ class ppqgis:
             return
 
         # Set network info in the dialog
-        self.dlg_runpp.setup_network(uri) # need filename as parameter like imprt method?
+        self.dlg_runpp.setup_network(uri)
 
         # Run dialog
         self.dlg_runpp.show()

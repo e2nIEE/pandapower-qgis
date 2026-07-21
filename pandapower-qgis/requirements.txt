@@ -1,4 +1,8 @@
-pandapower~=3.4.0
+pandapower~=3.5.4
+# pandapower 3.5 pulls numpy 2 and scipy 1.18, which are ABI-incompatible with
+# the pyarrow/numba shipped by OSGeo4W. pandapower itself works on numpy 1.
+numpy<2
+scipy<1.16
 geopandas
 numba
 pyproj

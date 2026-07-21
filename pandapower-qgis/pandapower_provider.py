@@ -9,7 +9,8 @@ import pandapower as pp
 # import pandapipes as ppi
 import os
 from . import pandapower_feature_iterator, pandapower_feature_source
-from .network_container import NetworkContainer
+from .network_session import NetworkSession, KIND_POWER, KIND_PIPES, DEFAULT_EPSG, add_vn_kv_to_lines
+from .pandapower_uri import decode_uri, has_geometry, layer_name_for, LEVELLED_TABLES
 from .provider_utils import MessageManager
 
 
@@ -58,8 +59,9 @@ class PandapowerProvider(QgsVectorDataProvider):
 
     def __init__(self, uri = "", providerOptions = QgsDataProvider.ProviderOptions(), flags = QgsDataProvider.ReadFlags()):
         """
-        Initialize the pandapower data provider with network data from NetworkContainer.
-        Sets up network type, coordinate system, and registers as a network update listener.
+        Initialize the pandapower data provider from the shared NetworkSession.
+        Sets up network type, coordinate system, and joins the session so that every
+        layer of the same file operates on one and the same network object.
         Args:
             uri: Data source URI identifying the network and network type
             providerOptions: Provider-specific configuration options
@@ -70,13 +72,21 @@ class PandapowerProvider(QgsVectorDataProvider):
         metadata_provider = QgsProviderRegistry.instance().providerMetadata("PandapowerProvider")
         self.uri = uri
         self.uri_parts = metadata_provider.decodeUri(uri)
+        # Normalise to the current URI scheme, accepting the pre-rework keys so
+        # that projects saved by an earlier version still open (plan section 3.5).
+        parts = decode_uri(self.uri_parts)
+        self.parts = parts
         self._provider_options = providerOptions
         self._flags = flags
 
         # Initialize all attributes with default values (prevents AttributeError while reopen qgis project file)
         self._is_valid = False
+        self.session = None
         self.net = None
-        self.network_type = self.uri_parts.get('network_type', None)
+        self._commit_connected = False
+        # 'network_type' is the table this layer exposes. The name is kept for
+        # the many internal uses; only the URI key was renamed to 'table'.
+        self.network_type = parts['table']
         self.type_layer_name = None
         self.current_crs = None
         self.crs = None
@@ -85,109 +95,127 @@ class PandapowerProvider(QgsVectorDataProvider):
         self._extent = None
         self.vn_kv = None
         self.pn_bar = None
-        self._save_in_progress = False
-        self._save_thread = None
-        self.network_data = None
 
-        # Bring network data from container
-        network_data = NetworkContainer.get_network(uri)
+        file_path = parts['path']
+        if not self.network_type:
+            MessageManager.show_error(
+                "Network Load Failed",
+                "The layer URI names no pandapower table."
+            )
+            return  # Safe early return - all attributes already initialized
 
-        # If container is empty (e.g., after project reload), load from file
-        if network_data is None:
-            network_data, error = self._load_network_from_file()
-            if network_data is None:
-                file_path = self.uri_parts.get('path', 'unknown')
-                MessageManager.show_error(
-                    "Network Load Failed",
-                    error or "Unknown error occurred"
-                )
-                return  # Safe early return - all attributes already initialized
-            # Successfully loaded from file - register to container
-            NetworkContainer.register_network(uri, network_data)
+        # Only the two pipe-specific tables imply a pandapipes file. Every other
+        # table name (bus, line, trafo, load, ...) exists in a pandapower net,
+        # and tables such as 'trafo' exist in both, so the kind cannot be
+        # inferred from the table name alone for those.
+        kind = KIND_PIPES if self.network_type in ('junction', 'pipe') else KIND_POWER
 
-        # Setting network data
-        self.net = network_data['net']
-        if self.uri_parts['network_type'] in ['bus', 'line']:
-            self.vn_kv = network_data['vn_kv']
-        elif self.uri_parts['network_type'] in ['junction', 'pipe']:
-            self.pn_bar = network_data['pn_bar']
-        else:
-            raise ValueError("Invalid network_type. Expected 'bus', 'line', 'junction', 'pipe'.")  # necessary?
-        self.network_type = self.uri_parts['network_type']
-        self.type_layer_name = network_data['type_layer_name']
-        self.current_crs = int(network_data['current_crs']) if network_data['current_crs'] else 4326
+        epsg = int(parts['epsg'] or DEFAULT_EPSG)
+
+        # Join the session for this file, loading the network only if this is the
+        # first layer to open it. Every other layer of the same file reuses the
+        # very same net object.
+        try:
+            self.session = NetworkSession.acquire(
+                file_path,
+                lambda: self._load_network_from_file(file_path, kind),
+                epsg=epsg,
+                kind=kind
+            )
+        except Exception as e:
+            MessageManager.show_error("Network Load Failed", str(e))
+            return  # Safe early return - all attributes already initialized
+
+        self.net = self.session.net
+
+        # The table must actually exist on the loaded network. Without this an
+        # unknown name would surface much later as an obscure AttributeError.
+        table_df = getattr(self.net, self.network_type, None)
+        if table_df is None or not isinstance(table_df, pd.DataFrame):
+            MessageManager.show_error(
+                "Network Load Failed",
+                f"The network has no table named '{self.network_type}'."
+            )
+            self.session.release()
+            self.session = None
+            return  # Safe early return - all attributes already initialized
+
+        self.current_crs = self.session.epsg
         self.crs = self.sourceCrs()
-        self.fields_list = None
-        self.df = None
-        self._extent = None
 
-        # Store network_data as instance variable for reuse
-        # This eliminates the need to recreate network_data dict in addFeatures, deleteFeatures, etc.
-        # Reference semantics ensure self.net modifications are automatically reflected
-        self.network_data = {
-            'net': self.net,
-            'vn_kv': self.vn_kv if self.vn_kv is not None else None,
-            'pn_bar': self.pn_bar if self.pn_bar is not None else None,
-            'type_layer_name': self.type_layer_name,
-            'network_type': self.network_type,
-            'current_crs': self.current_crs
-        }
+        # Voltage / pressure level this layer is filtered to. Absent for layers
+        # that cover a whole table rather than one level. Only bus/line and
+        # junction/pipe can be filtered by level; other tables ignore it.
+        level = parts['level']
+        if level and self.network_type in LEVELLED_TABLES:
+            if kind == KIND_POWER:
+                self.vn_kv = float(level)
+            else:
+                self.pn_bar = float(level)
 
-        provider_list = QgsProviderRegistry.instance().providerList()
+        self.type_layer_name = layer_name_for(file_path, self.network_type, level)
+
         self._is_valid = True
 
-        # State tracking variables for asynchronous save operation of the changeGeometryValues method
-        self._save_in_progress = False  # Indicates whether a save operation is in progress
-        self._save_thread = None  # QThread instance performing the save operation
+        # Join the session so sibling layers can be notified of changes.
+        self.session.add_provider(self)
 
-        # Register a notification subscription with NetworkContainer.
-        NetworkContainer.add_listener(self.uri, self)
+        # Write on commit rather than on every change (plan section 3.7). The
+        # layer does not exist yet at provider construction time, so the
+        # connection is made lazily from _connect_commit_signal().
+        self._commit_connected = False
 
 
-    def _load_network_from_file(self):
+    @property
+    def network_data(self):
         """
-        Load network data from JSON file when NetworkContainer is empty (e.g., after project reload).
-        This restores the network state from the original file.
+        Network data dictionary, derived from the session on demand.
+        Kept as a property for the call sites that still expect the old dict shape;
+        it is a view onto the session rather than a stored copy, so it can never go
+        stale the way the previous instance attribute could.
         Returns:
-            dict or None: Network data dictionary if successful, None if failed
+            dict: Network data, or None if the provider is not valid
         """
-        try:
-            file_path = self.uri_parts.get('path', '')
-            if not file_path:
-                return None, "File path is empty"
-            if not os.path.exists(file_path):
-                return None, f"File not found: {file_path}"
+        if self.session is None:
+            return None
+        return {
+            'net': self.session.net,
+            'vn_kv': self.vn_kv,
+            'pn_bar': self.pn_bar,
+            'type_layer_name': self.type_layer_name,
+            'network_type': self.network_type,
+            'current_crs': self.session.epsg
+        }
 
-            # Determine network type and load accordingly
-            if self.network_type in ['bus', 'line']:
-                # Load electrical network (pandapower)
-                net = pp.from_json(file_path)
 
-                # Add vn_kv column to lines (same as in ppqgis_import.py)
-                pp.add_column_from_node_to_elements(net, 'vn_kv', True, 'line')
+    @staticmethod
+    def _load_network_from_file(file_path, kind):
+        """
+        Load a pandapower network from a JSON file.
+        Called by NetworkSession only when the file is not already open, so this
+        runs once per file rather than once per layer.
+        Args:
+            file_path: Path of the network JSON file
+            kind: KIND_POWER or KIND_PIPES
+        Returns:
+            The loaded network object
+        Raises:
+            ValueError: If the path is empty, missing, or the kind is unsupported
+        """
+        if not file_path:
+            raise ValueError("File path is empty")
+        if not os.path.exists(file_path):
+            raise ValueError(f"File not found: {file_path}")
 
-                vn_kv = float(self.uri_parts.get('voltage_level', 0))
-                epsg = int(self.uri_parts.get('epsg', 4326))
+        if kind == KIND_PIPES:
+            # pandapipes support is planned but not integrated yet (plan section 5.4).
+            raise ValueError("Pipe networks not yet implemented")
 
-                # Reconstruct type_layer_name from URI parts
-                layer_base_name = os.path.basename(file_path).split('.')[0]
-                type_layer_name = f'{layer_base_name}_{vn_kv}_{self.network_type}'
-
-                return {
-                    'net': net,
-                    'vn_kv': vn_kv,
-                    'type_layer_name': type_layer_name,
-                    'network_type': self.network_type,
-                    'current_crs': epsg
-                }, None
-
-            elif self.network_type in ['junction', 'pipe']:
-                return None, "Pipe networks not yet implemented"
-            else:
-                return None, f"Invalid network_type: {self.network_type}"
-
-        except Exception as e:
-            return None, f"Failed to load network: {str(e)}"
+        net = pp.from_json(file_path)
+        # Add vn_kv column to lines, so line layers can be filtered by the
+        # voltage level of their from_bus.
+        add_vn_kv_to_lines(net)
+        return net
 
 
     def merge_df(self):
@@ -198,9 +226,11 @@ class PandapowerProvider(QgsVectorDataProvider):
         and handles cases where calculation results may be missing.
         """
         try:
-            # Get the dataframes for the network type and its result
+            # Get the dataframes for the network type and its result.
+            # Not every table has a res_* twin (e.g. 'switch'), and a res_*
+            # table is its own source with no second result table behind it.
             df_network_type = getattr(self.net, self.network_type)
-            df_res_network_type = getattr(self.net, f'res_{self.network_type}')
+            df_res_network_type = getattr(self.net, f'res_{self.network_type}', None)
 
             if hasattr(self, 'vn_kv') and self.vn_kv is not None:
                 if self.network_type == 'bus':
@@ -257,14 +287,22 @@ class PandapowerProvider(QgsVectorDataProvider):
                         self.df[col_name] = None  # Initialize all result columns to None
 
             if self.df.empty:
+                if self.vn_kv is not None:
+                    detail = f"for voltage level {self.vn_kv} kV"
+                elif self.pn_bar is not None:
+                    detail = f"for pressure level {self.pn_bar} bar"
+                else:
+                    detail = "in this network"
                 MessageManager.show_warning(
                     "Empty Layer",
-                    f"No {self.network_type} elements found for voltage level {getattr(self, 'vn_kv', 'N/A')} kV"
+                    f"No {self.network_type} elements found {detail}"
                 )
-                return
+                # Fall through: the meta columns are added below even for an
+                # empty table, so the layer still reports a consistent field
+                # list instead of no fields at all.
 
             # Add meta columns
-            # pp_type: Network type (bus, line, junction, pipe)
+            # pp_type: Network type (bus, line, junction, pipe, ...)
             self.df.insert(0, 'pp_type', self.network_type)
             # pp_index: Index in the original pandapower network
             self.df.insert(1, 'pp_index', self.df.index)
@@ -288,20 +326,18 @@ class PandapowerProvider(QgsVectorDataProvider):
         if not hasattr(self, 'fields_list') or not self.fields_list:
             self.fields_list = QgsFields()
 
-            print("length is 0, called merge df")
             self.merge_df()
 
-            if self.df.empty:
+            if self.df is None:
                 return QgsFields()
 
-            # generate fields_list dynamically from column of the dataframe
+            # generate fields_list dynamically from column of the dataframe.
+            # An empty table still yields its columns, so the layer reports a
+            # consistent field list rather than none at all.
             for column in self.df.columns:
                 dt = self.df[column].dtype
                 qm = convert_dtype_to_qmetatype(dt)
                 self.fields_list.append(QgsField(column, qm))
-
-            # Determine geometry type based on network type
-            geometry_type = "Point" if self.network_type in ['bus', 'junction'] else "LineString"
 
         # When fields are ready, set attribute form for addFeatrures dialog
         self._setup_attribute_form()
@@ -327,22 +363,15 @@ class PandapowerProvider(QgsVectorDataProvider):
 
     def changeGeometryValues(self, geometry_map):
         """
-        Update geometries of existing features and save changes asynchronously to JSON file.
-        Handles both point geometries(bus/junction) and line geometries(line/pipe) with
-        concurrent save operation protection.
+        Update geometries of existing features in the shared network.
+        Handles both point geometries (bus/junction) and line geometries (line/pipe).
+        Nothing is written to disk here: the file is written once when the user
+        commits the layer's edit buffer (see _on_layer_committed).
         Args:
             geometry_map: Map of feature IDs to new QgsGeometry objects
         Returns:
-            bool: True if update initiated successfully, False if operation denied or failed
+            bool: True if the geometries were updated
         """
-        if self._save_in_progress:
-            MessageManager.show_warning(
-                "Notification",
-                "Previous save operation is still running. Please try again after it is completed."
-            )
-            return False  # Operation denied
-
-        # Proceed to update and save the dataframe only when a save operation is not in progress
         try:
             # Update Geodata of Pandapower Network
             for feature_id, new_geometry in geometry_map.items():
@@ -351,33 +380,25 @@ class PandapowerProvider(QgsVectorDataProvider):
                     x = new_geometry.asPoint().x()
                     y = new_geometry.asPoint().y()
 
-                    # Update geodata of dataframe
-                    geodata_df = getattr(self.net, f'{self.network_type}').geo
-                    if feature_id in geodata_df.index:
-                        #geodata_df.at[feature_id, 'x'] = x
-                        #geodata_df.at[feature_id, 'y'] = y
+                    # Note: net.<table>.geo returns a Series copy, so it is read
+                    # from but never written to. The authoritative write is the
+                    # one into the table itself, further down.
+                    df_network_type = getattr(self.net, self.network_type)
+                    if feature_id in df_network_type.index:
                         try:
                             # Load geo data of existing dataframe and convert it into python dict
-                            geo_str = geodata_df.loc[feature_id]
-                            geo_data = json.loads(geo_str)
+                            geo_data = json.loads(df_network_type.at[feature_id, 'geo'])
 
                             # Update coordinates in 'coordinates' key of the dictionary
                             geo_data['coordinates'] = [x, y]
-
-                            # Convert back into json String and save updated data in dataframe
-                            geodata_df.loc[feature_id] = json.dumps(geo_data)
-
-                            # Store as variable for reuse
                             updated_geo_str = json.dumps(geo_data)
+
+                            # Update self.net.<table>['geo'] (root data source)
+                            df_network_type.at[feature_id, 'geo'] = updated_geo_str
 
                             # Update self.df['geo'] column (for Attribute Table display)
                             if 'geo' in self.df.columns and feature_id in self.df.index:
                                 self.df.at[feature_id, 'geo'] = updated_geo_str
-
-                            # Update self.net.bus['geo'] column (root data source)
-                            df_network_type = getattr(self.net, self.network_type)
-                            if 'geo' in df_network_type.columns and feature_id in df_network_type.index:
-                                df_network_type.at[feature_id, 'geo'] = updated_geo_str
 
                         except Exception as e:
                             raise ValueError(f"Error updating point geometry for ID {feature_id}: {str(e)}")
@@ -387,77 +408,33 @@ class PandapowerProvider(QgsVectorDataProvider):
                     points = new_geometry.asPolyline()
                     coords = [(point.x(), point.y()) for point in points]
 
-                    # Update geodata of dataframe
-                    #geodata_df = getattr(self.net, f'{self.network_type}_geodata')
-                    geodata_df = getattr(self.net, f'{self.network_type}').geo
-                    if feature_id in geodata_df.index:
-                        #geodata_df.at[feature_id, 'coords'] = coords
+                    # See the note above: the table itself is the only thing
+                    # written; net.<table>.geo is a copy.
+                    df_network_type = getattr(self.net, self.network_type)
+                    if feature_id in df_network_type.index:
                         try:
                             # Load geo data of existing dataframe and convert it into python dict
-                            geo_str = geodata_df.loc[feature_id]
-                            geo_data = json.loads(geo_str)
+                            geo_data = json.loads(df_network_type.at[feature_id, 'geo'])
 
                             # Update coordinates in 'coordinates' key of the dictionary
                             geo_data['coordinates'] = coords
-
-                            # Convert back into json String and save updated data in dataframe
-                            geodata_df.loc[feature_id] = json.dumps(geo_data)
-
-                            # Store changed geodata to update df and net
                             updated_geo_str = json.dumps(geo_data)
+
+                            # Update self.net.<table>['geo'] (root data source)
+                            df_network_type.at[feature_id, 'geo'] = updated_geo_str
 
                             # Update self.df['geo'] column (for Attribute Table display)
                             if 'geo' in self.df.columns and feature_id in self.df.index:
                                 self.df.at[feature_id, 'geo'] = updated_geo_str
 
-                            # Update self.net.line['geo'] column (root data source)
-                            df_network_type = getattr(self.net, self.network_type)
-                            if 'geo' in df_network_type.columns and feature_id in df_network_type.index:
-                                df_network_type.at[feature_id, 'geo'] = updated_geo_str
-
                         except Exception as e:
                             raise ValueError(f"Error updating line geometry for ID {feature_id}: {str(e)}")
 
-            # Asynchronous file saving tasks (Synchronous file saving tasks deleted)
-            # Define a callback function to be executed after saving
-            def on_save_complete(success, message, backup_path=None):
-                self._save_in_progress = False
-
-                # UI Feedback for success or failure
-                if success:
-                    MessageManager.show_success(
-                        "Saved Successfully",
-                        message
-                    )
-                    # Display backup file information
-                    if backup_path:
-                        MessageManager.show_info(
-                            "Backup Created",
-                            f"Backup file: {backup_path}"
-                        )
-
-                    # Change Notification Triggered
-                    self.dataChanged.emit()
-
-                    # Explicit Layer Update (Maybe not necessary)
-                    try:
-                        layers = QgsProject.instance().mapLayersByName(self.type_layer_name)
-                        if layers:
-                            layers[0].triggerRepaint()
-                    except Exception as e2:
-                        MessageManager.show_warning(
-                            "Display Update Failed",
-                            f"Could not refresh layer display: {str(e2)}"
-                        )
-                else:
-                    MessageManager.show_error(
-                        "Save Failed",
-                        message
-                    )
-
-            # Start asynchronous save
-            self.update_geodata_in_json_async(on_save_complete)
-            return True     # Notify that the save operation has started
+            # The network diverges from the file until the edit buffer is
+            # committed; the write itself happens in _on_layer_committed.
+            self._mark_dirty()
+            self.dataChanged.emit()
+            return True
 
         except Exception as e:
             MessageManager.show_error(
@@ -467,25 +444,21 @@ class PandapowerProvider(QgsVectorDataProvider):
             return False
 
 
-    def on_update_changed_network(self, network_data):
+    def on_session_changed(self):
         """
-        Handle network data updates from NetworkContainer notifications.
-        Safely updates internal network object and recreates dataframe while preserving
-        existing data in case of failure.
-        Args:
-            network_data: Updated network data dictionary containing 'net' key
+        Handle a change made to the shared network by another layer of the same file.
+        Since every provider of a file shares one net object, there is nothing to copy:
+        the cached dataframe is simply rebuilt from the network that already changed
+        underneath us, and the layer is repainted.
         """
-        old_net = self.net
         try:
-            # Update network object (safe)
-            self.net = network_data['net']
-
-            # Create new dataframe in separate variable (prevent Race Condition)
+            # Rebuild into a separate variable first, so a failure cannot leave
+            # self.df in a half-updated state.
             new_df = self._create_updated_dataframe()
 
-            # Replace at once after validation (Atomic Operation)
             if new_df is not None and not new_df.empty:
-                self.df = new_df  # Replace with new dataframe
+                self.df = new_df
+                self._extent = None  # Geometry may have moved; recompute lazily
             else:
                 # Keep existing data in case of failure
                 MessageManager.show_warning(
@@ -501,8 +474,18 @@ class PandapowerProvider(QgsVectorDataProvider):
                 f"Failed to update data for layer '{self.type_layer_name}': {str(e)}. "
                 f"The layer may show outdated or incorrect data."
             )
-            if 'old_net' in locals():
-                self.net = old_net      # Attempt to restore original state when error occurs
+
+
+    def on_update_changed_network(self, network_data=None):
+        """
+        Backwards-compatible alias for on_session_changed().
+        Deprecated: kept so any remaining caller of the old NetworkContainer listener
+        API keeps working. The network_data argument is ignored, because all providers
+        of a file now share one network object.
+        Args:
+            network_data: Ignored, accepted only for signature compatibility
+        """
+        self.on_session_changed()
 
 
     def _create_updated_dataframe(self):
@@ -556,193 +539,18 @@ class PandapowerProvider(QgsVectorDataProvider):
             return None
 
 
-    def update_geodata_in_json_async(self, callback=None):
-        """
-        Asynchronously update geodata changes in the original JSON file using background thread.
-        Creates backup file before modification and provides UI feedback through callback.
-        Note: It is method for asynchronous update.
-            For synchronous update, see update_geodata_in_json()
-        Args:
-            callback: Function to be called after saving is complete.
-                on_save_complete(success, message, backup_path)
-        """
-        if self._save_in_progress:
-            MessageManager.show_info(
-                "Notify",
-                "A save operation is already in progress. Please try again later."
-            )
-            return
-        else:
-            self._save_in_progress = True
-
-        from PyQt5.QtCore import QThread, pyqtSignal
-
-        class SaveThread(QThread):
-            # Save Completion Signal (Success Status, Message, Backup Path)
-            saveCompleted = pyqtSignal(bool, str, str)
-
-            def __init__(self, provider):
-                super().__init__()
-                self.provider = provider
-
-            def run(self):
-                try:
-                    import shutil
-                    from datetime import datetime
-
-                    original_path = self.provider.uri_parts.get('path', '')
-                    if not original_path or not os.path.exists(original_path):
-                        self.saveCompleted.emit(False, f"Cannot find original file at: {original_path}", "")
-                        return
-
-                    # Create Backup File (Add Date/Time Stamp)
-                    backup_path = f"{original_path}.{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak"
-                    try:
-                        shutil.copy2(original_path, backup_path)
-                    except Exception as e:
-                        # if backup creation failure non-critical and want to proceed
-                        #backup_path = ""
-                        self.saveCompleted.emit(False, f"Failed to create backup file: {str(e)}", "")
-                        return
-
-                    # Load original network from json file
-                    try:
-                        original_net = pp.from_json(original_path)
-                    except Exception as e:
-                        self.saveCompleted.emit(False, f"Fail to load original network: {str(e)}", backup_path)
-                        return
-
-                    # Modified geodata currently in memory
-                    current_geodata = getattr(self.provider.net, f"{self.provider.network_type}").geo
-
-                    # Update the original network’s geodata with the modified coordinates
-                    # Only filtered data is considered
-                    original_geodata = getattr(original_net, f"{self.provider.network_type}").geo
-
-                    for idx in current_geodata.index:
-                        if idx in original_geodata.index:
-                            # Copy the current JSON string to the original
-                            original_geodata.loc[idx] = current_geodata.loc[idx]
-
-                    # Save the updated network to JSON
-                    try:
-                        pp.to_json(original_net, original_path)
-                        success_msg = f"Coordinate changes have been saved: {original_path}"
-                        self.saveCompleted.emit(True, success_msg, backup_path)
-                    except PermissionError:
-                        error_msg = f"Cannot access the file. It may be open in another program or you don't have write permissions: {original_path}"
-                        self.saveCompleted.emit(False, error_msg, backup_path)
-                    except Exception as e:
-                        error_msg = f"An error occurred while saving file: {str(e)}"
-                        self.saveCompleted.emit(False, error_msg, backup_path)
-
-                except Exception as e:
-                    self.saveCompleted.emit(False, f"An error occurred while updating geodata: {str(e)}", "")
-
-        # Create a thread for saving
-        self._save_thread = SaveThread(self)
-
-        # Connect callback
-        if callback:
-            self._save_thread.saveCompleted.connect(callback)
-
-        # Starting thread
-        self._save_thread.start()
-
-
-    def update_geodata_in_json(self, auto_save=True):
-        """
-        Currently not used.
-        Synchronously update geodata changes in the original JSON file.
-        Creates backup before modification and updates original file with current geometry data.
-        Note: It is for synchronous update. For asynchronous update, see update_geodata_in_json_async()
-        Args:
-            auto_save: If True, saves to file; if False, keeps changes in memory only
-            Currently support auto save only.
-        Returns:
-            bool: True if update successful, False otherwise
-        """
-        if not auto_save:
-            print("Keep changes in memory without saving.")
-            return True
-
-        try:
-            import shutil
-            from datetime import datetime
-
-            original_path = self.uri_parts.get('path', '')
-            if not original_path or not os.path.exists(original_path):
-                self.pushError(f"The original file cannot be found at: {original_path}")
-                return False
-
-            # Create backup of json file before editing (add Date/Time stamp)
-            backup_path = f"{original_path}.{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak"
-            try:
-                shutil.copy2(original_path, backup_path)
-                print(f"A backup file has been created: {backup_path}")
-            except Exception as e:
-                print(f"An error occurred while creating backup file: {str(e)}")
-                # continue
-
-            # Load original network from json
-            original_net = pp.from_json(original_path)
-
-            # Changed geodata of current memory
-            #current_geodata = getattr(self.net, f"{self.network_type}_geodata")
-            current_geodata = getattr(self.net, f"{self.network_type}").geo
-
-            # Update geodata of original network as changed coordinate
-            # Only filtered data considered
-            #original_geodata = getattr(original_net, f"{self.network_type}_geodata")
-            original_geodata = getattr(original_net, f"{self.network_type}").geo
-
-            for idx in current_geodata.index:
-                if idx in original_geodata.index:
-                    '''
-                    if self.network_type in ['bus', 'junction']:
-                        if 'x' in current_geodata.columns and 'y' in current_geodata.columns:
-                            original_geodata.at[idx, 'x'] = current_geodata.at[idx, 'x']
-                            original_geodata.at[idx, 'y'] = current_geodata.at[idx, 'y']
-                    elif self.network_type in ['line', 'pipe']:
-                        if 'coords' in current_geodata.columns:
-                            original_geodata.at[idx, 'coords'] = current_geodata.at[idx, 'coords']
-                    '''
-                    # Copy current geodata (json String) to the original network
-                    original_geodata.loc[idx] = current_geodata.loc[idx]
-
-            # Save updated network to json
-            try:
-                pp.to_json(original_net, original_path)
-                return True
-            except PermissionError:
-                self.pushError(f"Cannot reach to {original_path}. The file may opened in another program or required permissions.")
-                return False
-            except Exception as e:
-                self.pushError(f"An Error occurred while saving: {str(e)}")
-                return False
-
-        except Exception as e:
-            self.pushError(f"Error occurred while updating geodata: {str(e)}")
-            return False
-
-    # =============================================================================================
-
     def changeAttributeValues(self, attr_map):
         """
-        Change attribute values of existing features and save changes asynchronously to JSON file.
-        Includes validation for critical fields and automatic vn_kv update when from_bus changes.
+        Change attribute values of existing features in the shared network.
+        Includes validation for critical fields.
+        Nothing is written to disk here: the file is written once when the user
+        commits the layer's edit buffer (see _on_layer_committed).
         Args:
             attr_map: Dictionary mapping feature IDs to attribute changes
                       Format: {feature_id: {field_index: new_value, ...}, ...}
         Returns:
-            bool: True if update initiated successfully, False if operation denied or failed
+            bool: True if any attribute was updated
         """
-        # Check if an existing save operation is in progress
-        if self._save_in_progress:
-            MessageManager.show_warning(
-                "Notification", "Previous save operation is still running. Please try again after it is completed.")
-            return False
-
         try:
             # Track which features were modified
             modified_features = set()
@@ -788,35 +596,10 @@ class PandapowerProvider(QgsVectorDataProvider):
             if not modified_features:
                 return False
 
-            # Callback function to be executed after saving
-            def on_save_complete(success, message, backup_path=None):
-                self._save_in_progress = False
-
-                if success:
-                    # Display success message
-                    MessageManager.show_success("Saved Successfully", message)
-                    if backup_path:
-                        MessageManager.show_info("Backup Created", f"Backup file: {backup_path}")
-
-                    # Notify QGIS that data changed
-                    self.dataChanged.emit()
-
-                    # Trigger layer repaint
-                    try:
-                        layers = QgsProject.instance().mapLayersByName(self.type_layer_name)
-                        if layers:
-                            layers[0].triggerRepaint()
-                    except Exception as e2:
-                        MessageManager.show_warning(
-                            "Display Update Failed", f"Could not refresh layer display: {str(e2)}")
-                else:
-                    MessageManager.show_error(
-                        "Save Failed",
-                        message
-                    )
-
-            # Start asynchronous save
-            self.update_attributes_in_json_async(on_save_complete)
+            # The network diverges from the file until the edit buffer is
+            # committed; the write itself happens in _on_layer_committed.
+            self._mark_dirty()
+            self.dataChanged.emit()
             return True
 
         except Exception as e:
@@ -940,187 +723,11 @@ class PandapowerProvider(QgsVectorDataProvider):
         return False
 
 
-    def update_attributes_in_json_async(self, callback=None):
-        """
-        Asynchronously update attribute changes in the original JSON file using background thread.
-        Creates backup file before modification and provides UI feedback through callback.
-        Args:
-            callback: Function to be called after saving is complete.
-                      Signature: on_save_complete(success, message, backup_path)
-        """
-        if self._save_in_progress:
-            MessageManager.show_warning(
-                "Notification", "A save operation is already in progress. Please try again later.")
-            return
-        else:
-            self._save_in_progress = True
-
-        from PyQt5.QtCore import QThread, pyqtSignal
-
-        class SaveThread(QThread):
-            # Save Completion Signal (Success Status, Message, Backup Path)
-            saveCompleted = pyqtSignal(bool, str, str)
-
-            def __init__(self, provider):
-                super().__init__()
-                self.provider = provider
-
-            def run(self):
-                try:
-                    import shutil
-                    from datetime import datetime
-
-                    original_path = self.provider.uri_parts.get('path', '')
-                    if not original_path or not os.path.exists(original_path):
-                        self.saveCompleted.emit(False, f"Cannot find original file at: {original_path}", "")
-                        return
-
-                    # Create Backup File (Add Date/Time Stamp)
-                    backup_path = f"{original_path}.{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak"
-                    try:
-                        shutil.copy2(original_path, backup_path)
-                    except Exception as e:
-                        self.saveCompleted.emit(False, f"Failed to create backup: {str(e)}", "")
-                        return
-
-                    # Load original network from json file
-                    try:
-                        original_net = pp.from_json(original_path)
-                    except Exception as e:
-                        self.saveCompleted.emit(False, f"Failed to load original network: {str(e)}", backup_path)
-                        return
-
-                    # Modified data currently in memory
-                    current_df = getattr(self.provider.net, self.provider.network_type)
-
-                    # Update the original network's data with modified attributes
-                    original_df = getattr(original_net, self.provider.network_type)
-
-                    new_rows = []
-
-                    # Copy modified rows to original network
-                    # Only update rows that exist in current_df (filtered by vn_kv)
-                    for idx in current_df.index:
-                        if idx in original_df.index:
-                            # Copy all columns from current to original
-                            for col in current_df.columns:
-                                if col in original_df.columns:
-                                    original_df.at[idx, col] = current_df.at[idx, col]
-                        # Append newly added rows
-                        else:
-                            new_rows.append(current_df.loc[idx])
-
-                    # Run concat at once after for loop
-                    if new_rows:
-                        new_df = pd.DataFrame(new_rows)
-                        updated_df = pd.concat([original_df, new_df], ignore_index=False)
-                        setattr(original_net, self.provider.network_type, updated_df)
-                        # Update local variable too
-                        original_df = getattr(original_net, self.provider.network_type)
-
-                    # Save the updated network to JSON
-                    try:
-                        pp.to_json(original_net, original_path)
-                        self.saveCompleted.emit(True, f"Attribute changes have been saved: {original_path}", backup_path)
-                    except PermissionError:
-                        self.saveCompleted.emit(False, f"Cannot access the file. It may be open in another program or you don't have write permissions: {original_path}", backup_path)
-                    except Exception as e:
-                        self.saveCompleted.emit(False, f"An error occurred while saving file: {str(e)}", backup_path)
-
-                except Exception as e:
-                    self.saveCompleted.emit(False, f"An error occurred while updating attributes: {str(e)}", "")
-
-        # Create a thread for saving
-        self._save_thread = SaveThread(self)
-
-        # Connect callback
-        if callback:
-            self._save_thread.saveCompleted.connect(callback)
-
-        # Starting thread
-        self._save_thread.start()
-
-
-    def update_entire_network_in_json_async(self, callback=None):
-        """
-        Save the ENTIRE network to JSON file asynchronously.
-        This method saves the complete network state without merge logic.
-        Use this for operations that modify multiple element types simultaneously,
-        such as cascade deletions (deleting a bus also deletes connected lines, loads, etc.).
-        - Differences from update_attributes_in_json_async():
-            - update_attributes_in_json_async(): Smart merge for single layer (bus OR line)
-            - update_entire_network_in_json_async(): Direct save of entire network
-        Args:
-            callback: Optional callback function(success: bool, message: str, backup_path: str)
-                     to be called after save completes
-        """
-        # Check if another save operation is in progress
-        if self._save_in_progress:
-            MessageManager.show_warning(
-                "Notification", "Another save operation is in progress. Please try again later.")
-            return
-        else:
-            self._save_in_progress = True
-
-        from PyQt5.QtCore import QThread, pyqtSignal
-
-        class SaveThread(QThread):
-            # Save Completion Signal (Success Status, Message, Backup Path)
-            saveCompleted = pyqtSignal(bool, str, str)
-
-            def __init__(self, provider):
-                super().__init__()
-                self.provider = provider
-
-            def run(self):
-                try:
-                    import shutil
-                    from datetime import datetime
-
-                    original_path = self.provider.uri_parts.get('path', '')
-                    if not original_path or not os.path.exists(original_path):
-                        self.saveCompleted.emit(False, f"Cannot find original file at: {original_path}", "")
-                        return
-
-                    # Create Backup File (Add Date/Time Stamp)
-                    backup_path = f"{original_path}.{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak"
-                    try:
-                        shutil.copy2(original_path, backup_path)
-                    except Exception as e:
-                        self.saveCompleted.emit(False, f"Failed to create backup: {str(e)}", "")
-                        return
-
-                    # Save the entire network directly
-                    # Note: self.provider.net contains the ENTIRE network (not filtered)
-                    # Any modifications (like cascade deletions) are already applied to it
-                    try:
-                        pp.to_json(self.provider.net, original_path)
-                        self.saveCompleted.emit(True, f"Entire network saved: {original_path}", backup_path)
-                    except PermissionError:
-                        self.saveCompleted.emit(False, f"Cannot access the file. It may be open in another program: {original_path}", backup_path)
-                    except Exception as e:
-                        self.saveCompleted.emit(False, f"Error saving file: {str(e)}", backup_path)
-
-                except Exception as e:
-                    self.saveCompleted.emit(False, f"Error saving entire network: {str(e)}", "")
-
-        # Create a thread for saving
-        self._save_thread = SaveThread(self)
-
-        # Connect callback
-        if callback:
-            self._save_thread.saveCompleted.connect(callback)
-
-        # Start thread
-        self._save_thread.start()
-
-    # ===============================================================================
-
     def addFeatures(self, features, flags=None):
         """
         Add new features to the pandapower network.
         Validates feature data, creates corresponding pandapower elements,
-        and updates the NetworkContainer.
+        and notifies the shared NetworkSession.
         Note:
             This method follows the PyQGIS convention where C++ reference parameters
             (marked with SIP_INOUT) are returned as part of a tuple in Python.
@@ -1132,11 +739,6 @@ class PandapowerProvider(QgsVectorDataProvider):
                 - success (bool): True if features were successfully added, False otherwise
                 - features (list): The list of features with updated IDs and attributes
         """
-        # Check if save operation is in progress
-        if self._save_in_progress:
-            MessageManager.show_warning("Notification", "A save operation is in progress. Please try again later.")
-            return (False, [])
-
         # Pre-validation - Check if file can be saved BEFORE processing
         if not self._validate_can_save():
             MessageManager.show_error(
@@ -1231,31 +833,16 @@ class PandapowerProvider(QgsVectorDataProvider):
                 new_df = pd.DataFrame(new_rows, index=added_indices)
                 self.df = pd.concat([self.df, new_df], ignore_index=False)
 
-            # Save to JSON file asynchronously
-            def on_save_complete(success, message, backup_path=None):
-                self._save_in_progress = False
-
-                if success:
-                    MessageManager.show_success(
-                        "Features Added", f"Added {len(added_indices)} feature(s) and saved to file.")
-                    NetworkContainer.register_network(self.uri, self.network_data)
-
-                    # Trigger data change notification
-                    self.dataChanged.emit()
-
-                else:
-                    MessageManager.show_error(
-                        "⚠️ Save Failed - Features added to memory but NOT Saved to File",
-                        f"Features: {added_indices} Reason: {message}\n"
-                    )
-
-            # Async run
-            self.update_attributes_in_json_async(on_save_complete)
+            # The network diverges from the file until the edit buffer is
+            # committed; the write itself happens in _on_layer_committed.
+            self._mark_dirty()
+            if self.session:
+                self.session.notify_changed(source=self)
+            self.dataChanged.emit()
             return (True, features)
 
         except Exception as e:
             MessageManager.show_error("Add Features Failed", f"Failed to add features: {str(e)}")
-            self._save_in_progress = False  # Reset flag on error
             return (False, [])
 
 
@@ -1311,6 +898,96 @@ class PandapowerProvider(QgsVectorDataProvider):
             return None
         except Exception as e:
             return None
+
+
+    def _mark_dirty(self):
+        """
+        Record that the in-memory network no longer matches the file on disk.
+        Also makes sure the commit signal is connected, so the change actually
+        reaches disk when the user saves the layer edits.
+        """
+        if self.session:
+            self.session.mark_dirty()
+        self._connect_commit_signal()
+
+
+    def _connect_commit_signal(self):
+        """
+        Connect to this layer's afterCommitChanges signal, once.
+        The layer does not exist yet while the provider is being constructed,
+        so the connection is deferred until the first time it is needed.
+        """
+        if self._commit_connected:
+            return
+
+        layer = self._get_layer()
+        if layer is None:
+            return  # Layer not registered yet; try again on the next change
+
+        try:
+            layer.afterCommitChanges.connect(self._on_layer_committed)
+            self._commit_connected = True
+        except Exception as error:
+            print('Could not connect commit signal: {}'.format(error))
+
+
+    def _on_layer_committed(self):
+        """
+        Write the network to disk after the user commits the layer edit buffer.
+        This is the single point at which edits reach the file. If several
+        layers of one network commit in the same action, only the first write
+        does any work: it clears the session's dirty flag, so the rest see a
+        clean session and skip.
+        """
+        session = self.session
+        if session is None or not session.dirty:
+            return  # Nothing to write, or another layer already wrote it
+
+        # Never silently overwrite a file that changed underneath us (plan 5.3).
+        if session.file_changed_externally():
+            if not self._confirm_overwrite_external_change():
+                return
+
+        success, message, backup_path = session.write()
+
+        if success:
+            MessageManager.show_success("Network Saved", message)
+            if backup_path:
+                MessageManager.show_info(
+                    "Backup Created", f"Backup file: {backup_path}")
+            # A committed edit can move features between voltage-level layers,
+            # so refresh siblings once per commit rather than once per feature.
+            session.notify_changed(source=self)
+        else:
+            MessageManager.show_error(
+                "Save Failed",
+                f"{message}\n\nThe changes are still in memory. "
+                f"Fix the problem and save the layer again."
+            )
+
+
+    def _confirm_overwrite_external_change(self):
+        """
+        Ask whether to overwrite a file that changed since it was opened.
+        Returns:
+            bool: True if the user chose to overwrite
+        """
+        try:
+            from qgis.PyQt.QtWidgets import QMessageBox
+
+            answer = QMessageBox.question(
+                None,
+                "File changed on disk",
+                f"{self.session.path}\n\n"
+                f"has changed since it was opened. Overwrite it with the "
+                f"in-memory network?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            return answer == QMessageBox.Yes
+        except Exception:
+            # Without a GUI, refuse rather than clobber the file.
+            return False
 
 
     def _setup_attribute_form(self):
@@ -1771,12 +1448,6 @@ class PandapowerProvider(QgsVectorDataProvider):
         Returns:
             bool: True if deletion was successful, False otherwise
         """
-        # Check if another save operation is in progress
-        if self._save_in_progress:
-            MessageManager.show_warning(
-                "Notification", "Another save operation is in progress. Please try again later.")
-            return False
-
         # Pre-validation: Check if file can be saved
         if not self._validate_can_save():
             return False
@@ -1978,84 +1649,61 @@ class PandapowerProvider(QgsVectorDataProvider):
 
     def _notify_affected_layers(self):
         """
-        Layer notification without NetworkContainer - call dataChanged.emit() directly on their providers
-        Notify all layers that share the same network file and voltage level.
+        Notify sibling layers of the same network file that the data changed.
         This handles cascade deletions where multiple network_types are affected
         (e.g., bus deletion causes line deletion).
+        The session knows every provider of this file directly, so there is no need
+        to scan the whole project. Note that all network_types are notified, not just
+        those of the same voltage level: a bus deletion cascades into lines, which may
+        sit in a different layer.
         """
+        if not self.session:
+            return
         try:
-            my_path = self.uri_parts.get('path')
-            my_vn_kv = self.vn_kv if hasattr(self, 'vn_kv') else None
+            for provider in self.session.providers():
+                if provider is self:
+                    continue    # Skip self (notified separately in _save_deletions())
+                provider.dataChanged.emit()
 
-            # Iterate through all layers in QGIS project
+            # Repaint the affected layers in the project.
             for layer in QgsProject.instance().mapLayers().values():
                 provider = layer.dataProvider()
-
-                if not hasattr(provider, 'uri_parts'):
-                    continue    # skip if not PandapowerProvider
-                layer_path = provider.uri_parts.get('path')
-                if layer_path != my_path:
-                    continue    # skip different network file
-                layer_vn_kv = provider.vn_kv if hasattr(provider, 'vn_kv') else None
-                if layer_vn_kv != my_vn_kv:
-                    continue    # skip different voltage level
-                if provider.uri == self.uri:
-                    continue    # Skip self (will be notified separately in _save_deletions())
-
-                # Notify affected layer
-                provider.dataChanged.emit()
-                layer.triggerRepaint()
+                if getattr(provider, 'session', None) is self.session and provider is not self:
+                    layer.triggerRepaint()
 
         except Exception as e:
-            pass
+            print(f"Failed to notify affected layers: {str(e)}")
 
 
     def _save_deletions(self, deleted_ids, element_type):
         """
-        Save deletions to JSON file asynchronously and update NetworkContainer.
-        Added direct layer notification for cascade deletions.
+        Record deletions and refresh the affected layers.
+        Nothing is written to disk here: the file is written once when the user
+        commits the layer's edit buffer (see _on_layer_committed).
         Args:
             deleted_ids: List of deleted element indices
             element_type: Type of element ('bus' or 'line')
         Returns:
-            bool: True (async operation started successfully)
+            bool: True when the deletion was recorded
         """
         try:
-            # Define callback for after save completes
-            def on_save_complete(success, message, backup_path=None):
-                self._save_in_progress = False
+            self._mark_dirty()
 
-                if success:
-                    MessageManager.show_success(
-                        "Features Deleted",
-                        f"Deleted {len(deleted_ids)} {element_type}(s) and saved to file"
-                    )
+            if self.session:
+                self.session.notify_changed(source=self)
 
-                    NetworkContainer.register_network(self.uri, self.network_data)
+            # Notify self first, then the sibling layers: deleting a bus
+            # cascades into the lines attached to it, which live in another
+            # layer.
+            self.dataChanged.emit()
+            if element_type == 'bus':
+                self._notify_affected_layers()
 
-                    # Direct layer notification - Trigger data change notification (refreshes QGIS display)
-                    # Notify self first
-                    self.dataChanged.emit()
-                    # For cascade deletions (bus deletion), notify affected layers
-                    if element_type == 'bus':
-                        self._notify_affected_layers()
-                else:
-                    MessageManager.show_error(
-                        "Save Failed",
-                        f"Elements deleted from memory but NOT saved to file!\n"
-                        f"Deleted {element_type}(s): {deleted_ids}\n"
-                        f"Reason: {message}\n\n"
-                        f"You can restore from backup file if needed."
-                    )
-
-            # Start async save operation
-            # This will update both the element table and res_ table in JSON
-            self.update_entire_network_in_json_async(on_save_complete)
             return True
 
         except Exception as e:
-            MessageManager.show_error("Save Failed", f"Failed to initiate save operation: {str(e)}")
-            self._save_in_progress = False  # Reset flag on error
+            MessageManager.show_error(
+                "Delete Failed", f"Failed to record deletion: {str(e)}")
             return False
 
 
@@ -2165,17 +1813,32 @@ class PandapowerProvider(QgsVectorDataProvider):
     def capabilities(self) -> QgsVectorDataProvider.Capabilities:
         """
         Return the capabilities supported by this data provider.
+        Capabilities depend on the table: attribute-only tables have no geometry
+        to change and no spatial index, and adding or deleting rows is only
+        implemented for bus and line. Advertising more than is implemented would
+        let QGIS offer edits that are then rejected.
         Returns:
             QgsVectorDataProvider.Capabilities
         """
-        return (
-            QgsVectorDataProvider.CreateSpatialIndex |
+        caps = (
             QgsVectorDataProvider.SelectAtId |
-            QgsVectorDataProvider.ChangeGeometries |
-            QgsVectorDataProvider.ChangeAttributeValues |
-            QgsVectorDataProvider.AddFeatures |
-            QgsVectorDataProvider.DeleteFeatures
+            QgsVectorDataProvider.ChangeAttributeValues
         )
+
+        if self.has_geometry():
+            caps |= (
+                QgsVectorDataProvider.CreateSpatialIndex |
+                QgsVectorDataProvider.ChangeGeometries
+            )
+
+        # addFeatures()/deleteFeatures() are implemented for bus and line only.
+        if self.network_type in ('bus', 'line'):
+            caps |= (
+                QgsVectorDataProvider.AddFeatures |
+                QgsVectorDataProvider.DeleteFeatures
+            )
+
+        return caps
 
 
     def crs(self) -> QgsCoordinateReferenceSystem:
@@ -2227,6 +1890,10 @@ class PandapowerProvider(QgsVectorDataProvider):
         Returns:
             QgsRectangle: Bounding rectangle containing all features, empty if no valid coordinates
         """
+        # An attribute-only table has no spatial extent at all.
+        if not self.has_geometry():
+            return QgsRectangle()
+
         if not self._extent:
             try:
                 min_x = float('inf')
@@ -2234,8 +1901,7 @@ class PandapowerProvider(QgsVectorDataProvider):
                 min_y = float('inf')
                 max_y = float('-inf')
 
-                #df_geodata = getattr(self.net, f'{self.network_type}_geodata')
-                df_geodata = getattr(self.net, f'{self.network_type}').geo
+                df_geodata = getattr(self.net, self.network_type).geo
                 if df_geodata is None or df_geodata.empty:
                     return QgsRectangle()
 
@@ -2336,24 +2002,40 @@ class PandapowerProvider(QgsVectorDataProvider):
         """
         Get the Well-Known Binary geometry type for features in this provider.
         Returns:
-            QgsWkbTypes: Point for bus/junction, LineString for line/pipe
+            QgsWkbTypes: Point for bus/junction, LineString for line/pipe,
+                NoGeometry for attribute-only tables such as trafo or load
         """
-        if self.network_type == 'bus' or self.network_type == 'junction':
+        if self.network_type in ('bus', 'junction'):
             return QgsWkbTypes.Point
-        elif self.network_type == 'line' or self.network_type == 'pipe':
+        elif self.network_type in ('line', 'pipe'):
             return QgsWkbTypes.LineString
+        # Attribute-only table: opens as a plain table, like a non-spatial
+        # table in a database (plan section 3.6).
+        return QgsWkbTypes.NoGeometry
+
+
+    def has_geometry(self):
+        """
+        Whether the table this provider exposes carries geometry.
+        Returns:
+            bool: True for bus/junction/line/pipe, False for attribute-only tables
+        """
+        return has_geometry(self.network_type)
 
 
     def unload(self):
         """
-        Clean up provider resources when being destroyed.
-        Removes network update listener, waits for background save operations to complete,
-        and unregisters the provider from the registry.
+        Clean up resources of THIS provider instance when it is destroyed.
+        Removes the network update listener and waits for background save operations
+        to complete.
+        Note: this must not touch the provider registry. The registry entry is owned by
+        the plugin (registered in __init__.classFactory) and shared by every pandapower
+        layer in the project. Deregistering it here would invalidate all other open
+        pandapower layers as soon as a single layer is closed.
         """
-        # Remove from listener
-        NetworkContainer.remove_listener(self.uri, self)
-        # Wait until the running save thread completes
-        if self._save_thread and self._save_thread.isRunning():
-            self._save_thread.wait()
-        # Remove custom data provider when it is deleted
-        QgsProviderRegistry.instance().removeProvider('PandapowerProvider')
+        # Leave the shared session. The network is dropped from memory once the
+        # last layer using this file has been closed.
+        if self.session:
+            self.session.remove_provider(self)
+            self.session.release()
+            self.session = None

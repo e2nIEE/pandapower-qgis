@@ -24,7 +24,7 @@
 
 from qgis.PyQt.QtWidgets import QAction, QFileDialog, QListWidgetItem, QTreeWidgetItem, QPushButton, QDockWidget
 from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, NULL
-from .network_container import NetworkContainer
+from .network_session import NetworkSession
 
 from typing import List
 import copy
@@ -32,7 +32,7 @@ import copy
 
 def get_original_network_from_container(selected_layers):
     """
-    Retrieve the original pandapower/pandapipes network from NetworkContainer.
+    Retrieve the original pandapower/pandapipes network from the shared session.
     Args:
         selected_layers: List of selected layer names
     Returns:
@@ -52,15 +52,13 @@ def get_original_network_from_container(selected_layers):
 
         # Check if this is a PandapowerProvider layer
         if provider.name() == "PandapowerProvider":
-            uri = provider.dataSourceUri()
-            network_data = NetworkContainer.get_network(uri)
-
-            if network_data and 'net' in network_data:
+            session = getattr(provider, 'session', None)
+            if session is not None and session.net is not None:
                 QgsMessageLog.logMessage(
                     f"Found original network from layer: {layer_name}",
                     level=Qgis.Info
                 )
-                return network_data['net']
+                return session.net
 
     return None
 
@@ -70,7 +68,7 @@ def power_network(parent, selected_layers) -> None:
     Export pandapower network to JSON file.
 
     This function now uses a lossless export approach:
-    1. Retrieves the original complete network from NetworkContainer
+    1. Retrieves the original complete network from the shared NetworkSession
     2. Preserves all components (ext_grid, load, gen, trafo, etc.)
     3. Saves the complete network to JSON
 
@@ -78,7 +76,7 @@ def power_network(parent, selected_layers) -> None:
         parent: Parent plugin object
         selected_layers: List of selected layer names to export
     """
-    # Try to get the original network from NetworkContainer
+    # Try to get the original network from the shared session
     original_net = get_original_network_from_container(selected_layers)
 
     if original_net is None:

@@ -8,7 +8,8 @@ from qgis.PyQt.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
                                  QProgressBar, QTextEdit, QPushButton, QFrame, QComboBox)
 from qgis.PyQt.QtCore import Qt, QThread, pyqtSignal
 from qgis.core import QgsProviderRegistry
-from .network_container import NetworkContainer
+from .network_session import NetworkSession
+from .pandapower_uri import decode_uri
 
 
 class ppRunDialog(QDialog):
@@ -23,7 +24,7 @@ class ppRunDialog(QDialog):
 
         # Save network information
         self.uri = None
-        self.network_data = None
+        self.session = None
         self.network_type = None
 
         self.setup_ui()
@@ -226,15 +227,15 @@ class ppRunDialog(QDialog):
 
         try:
             provider_metadata = QgsProviderRegistry.instance().providerMetadata("PandapowerProvider")
-            uri_parts = provider_metadata.decodeUri(uri)
+            uri_parts = decode_uri(provider_metadata.decodeUri(uri))
 
-            self.network_data = NetworkContainer.get_network(uri)
+            self.session = NetworkSession.get(uri_parts.get('path', ''))
 
-            if not self.network_data:
-                self.show_error("Failed to load network data from container")
+            if not self.session:
+                self.show_error("Failed to load network data from session")
                 return
 
-            network_type = uri_parts.get('network_type', '')
+            network_type = uri_parts.get('table') or ''
             if network_type in ['bus', 'line']:
                 self.network_type = 'power'
                 self.update_power_network_info()
@@ -254,7 +255,7 @@ class ppRunDialog(QDialog):
 
     def update_power_network_info(self):
         """Update power network information."""
-        net = self.network_data['net']
+        net = self.session.net
 
         self.network_type_value.setText("Pandapower Network")
         self.bus_label.setText(self.tr("Buses: "))
@@ -275,7 +276,7 @@ class ppRunDialog(QDialog):
 
     def update_pipes_network_info(self):
         """Update pipes network information."""
-        net = self.network_data['net']
+        net = self.session.net
 
         self.network_type_value.setText("Pandapipes Network")
         self.bus_label.setText(self.tr("Junctions: "))

@@ -1,6 +1,5 @@
 # coding=utf-8
-"""Tests for QGIS functionality.
-
+"""Tests that the QGIS environment the plugin needs is present.
 
 .. note:: This program is free software; you can redistribute it and/or modify
      it under the terms of the GNU General Public License as published by
@@ -13,14 +12,12 @@ __date__ = '20/01/2011'
 __copyright__ = ('Copyright 2012, Australia Indonesia Facility for '
                  'Disaster Reduction')
 
-import os
 import unittest
-from qgis.core import (
-    QgsProviderRegistry,
-    QgsCoordinateReferenceSystem,
-    QgsRasterLayer)
+
+from qgis.core import QgsCoordinateReferenceSystem, QgsProviderRegistry
 
 from .utilities import get_qgis_app
+
 QGIS_APP = get_qgis_app()
 
 
@@ -28,33 +25,39 @@ class QGISTest(unittest.TestCase):
     """Test the QGIS Environment"""
 
     def test_qgis_environment(self):
-        """QGIS environment has the expected providers"""
+        """QGIS environment has the providers the plugin relies on.
 
-        r = QgsProviderRegistry.instance()
-        self.assertIn('gdal', r.providerList())
-        self.assertIn('ogr', r.providerList())
-        self.assertIn('postgres', r.providerList())
+        Only 'gdal' and 'ogr' are checked. The plugin does not use 'postgres',
+        and that provider is absent from minimal OSGeo4W installations.
+        """
+        registry = QgsProviderRegistry.instance()
+        self.assertIn('gdal', registry.providerList())
+        self.assertIn('ogr', registry.providerList())
 
     def test_projection(self):
-        """Test that QGIS properly parses a wkt string.
-        """
-        crs = QgsCoordinateReferenceSystem()
-        wkt = (
-            'GEOGCS["GCS_WGS_1984",DATUM["D_WGS_1984",'
-            'SPHEROID["WGS_1984",6378137.0,298.257223563]],'
-            'PRIMEM["Greenwich",0.0],UNIT["Degree",'
-            '0.0174532925199433]]')
-        crs.createFromWkt(wkt)
-        auth_id = crs.authid()
-        expected_auth_id = 'EPSG:4326'
-        self.assertEqual(auth_id, expected_auth_id)
+        """QGIS resolves the EPSG codes the plugin uses for network geodata.
 
-        # now test for a loaded layer
-        path = os.path.join(os.path.dirname(__file__), 'tenbytenraster.asc')
-        title = 'TestRaster'
-        layer = QgsRasterLayer(path, title)
-        auth_id = layer.crs().authid()
-        self.assertEqual(auth_id, expected_auth_id)
+        4326 is the default CRS assumed by PandapowerProvider when a network
+        carries no explicit EPSG code.
+        """
+        crs = QgsCoordinateReferenceSystem.fromEpsgId(4326)
+        self.assertTrue(crs.isValid())
+        self.assertEqual(crs.authid(), 'EPSG:4326')
+
+    def test_projected_crs_round_trip(self):
+        """A projected CRS survives a WKT round trip.
+
+        Network geodata is frequently stored in a metric CRS such as
+        EPSG:25832 (ETRS89 / UTM zone 32N) rather than in degrees.
+        """
+        crs = QgsCoordinateReferenceSystem.fromEpsgId(25832)
+        self.assertTrue(crs.isValid())
+
+        restored = QgsCoordinateReferenceSystem()
+        restored.createFromWkt(crs.toWkt())
+        self.assertTrue(restored.isValid())
+        self.assertEqual(restored.authid(), 'EPSG:25832')
+
 
 if __name__ == '__main__':
     unittest.main()

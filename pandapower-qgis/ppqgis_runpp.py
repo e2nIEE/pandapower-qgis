@@ -10,7 +10,7 @@ from qgis.PyQt.QtCore import QThread, pyqtSignal
 from qgis.PyQt.QtWidgets import QMessageBox
 
 from .renderer_utils import create_power_renderer
-from .network_container import NetworkContainer
+from .network_session import NetworkSession
 
 
 def run_network(parent, uri, parameters):
@@ -24,29 +24,36 @@ def run_network(parent, uri, parameters):
         tuple: (success, message) - overall workflow status
     """
     try:
-        # Get network data
-        network_data = NetworkContainer.get_network(uri)
+        # Get the shared session for the file this URI points at
+        metadata_provider = QgsProviderRegistry.instance().providerMetadata("PandapowerProvider")
+        file_path = metadata_provider.decodeUri(uri).get('path')
+        session = NetworkSession.get(file_path)
 
-        if not network_data:
+        if session is None:
             error_message = "Network data not found."
             show_error_message(parent, error_message)
             return False
 
         # Extract network object
-        net = network_data.get('net')
-        if not net:
+        net = session.net
+        if net is None:
             error_message = "Network object is not valid."
             show_error_message(parent, error_message)
             return False
 
-        # Execute calculation
+        # Execute calculation. pandapower mutates the network in place, so the
+        # results land directly on the object every layer of this file shares.
         success, result_message, updated_net = execute_calculation(net, parameters)
         if success:
             try:
-                # Update network data
-                network_data['net'] = updated_net
+                # Keep the session pointing at the calculated network. This is
+                # normally the very same object, but an implementation that
+                # returns a new one is handled correctly too.
+                if updated_net is not None:
+                    session.net = updated_net
+                session.mark_dirty()
                 # Post-process calculation (update results and colors)
-                post_process_results(parent, uri, network_data, parameters)
+                post_process_results(parent, uri, session, parameters)
             except Exception as post_error:
                 import traceback
                 # Treat as successful calculation even if post-processing fails
@@ -236,49 +243,25 @@ def generate_power_result_message(net, function_name):
         return f"Calculation completed (message generation error: {str(e)})"
 
 
-def post_process_results(parent, uri, network_data, parameters):
+def post_process_results(parent, uri, session, parameters):
     """
     Perform post-calculation cleanup tasks.
-    - Update calculation results in network container
+    - Refresh every layer of the calculated network
     - Update layer colors if needed
     - Handle result display options
     Args:
         parent: Parent object
         uri (str): Network URI
-        network_data (dict): Network data
+        session (NetworkSession): Session holding the calculated network
         parameters (dict): User setting parameters
     """
     try:
-        metadata_provider = QgsProviderRegistry.instance().providerMetadata("PandapowerProvider")
-        uri_parts = metadata_provider.decodeUri(uri)
-        file_path = uri_parts.get('path')
+        # Every layer of this file shares the session's network object, so the
+        # results are already visible to them. They only need to rebuild their
+        # cached dataframes and repaint.
+        session.notify_changed()
 
-        # Check all URIs registered in NetworkContainer and extract URIs belonging to the same file
-        all_uris = list(NetworkContainer._networks.keys())
-        related_uris = []
-        for existing_uri in all_uris:
-            if f'path="{file_path}"' in existing_uri:
-                related_uris.append(existing_uri)
-        if not related_uris:
-            print("⚠️ No related URIs found.")
-            return
-
-        # Update all URIs of the same file and notify network container
-        for related_uri in related_uris:
-            # Get existing data for each URI
-            existing_data = NetworkContainer.get_network(related_uri)
-            if existing_data:
-                # Update only network object (keep other information as is)
-                updated_data = existing_data.copy()
-                updated_data['net'] = network_data['net']  # Latest network including calculation results
-
-                # Update NetworkContainer (notification sent)
-                NetworkContainer.register_network(related_uri, updated_data)
-                print(f"✅ URI update completed: {related_uri}\n")
-            else:
-                print(f"⚠️ Existing data not found: {related_uri}")
-
-        # Find layers matching URI among layers open in QGIS
+        # Find the layers backed by this session among the open QGIS layers
         layers = QgsProject.instance().mapLayers()
         target_layers = []
         current_renderers = []
@@ -286,12 +269,13 @@ def post_process_results(parent, uri, network_data, parameters):
         for layer_id, layer in layers.items():
             if (hasattr(layer, 'dataProvider') and
                     layer.dataProvider().name() == "PandapowerProvider"):
-                layer_source = layer.source()
-                if layer_source in related_uris:
+                if getattr(layer.dataProvider(), 'session', None) is session:
                     target_layers.append(layer)
                     current_renderers.append(layer.renderer())
-                    print(f"✅ Target layer found: {layer.name()}")
-                    print(f"✅ Target layer renderer found: {layer.renderer()}")
+
+        if not target_layers:
+            print("⚠️ No layers found for the calculated network.")
+            return
 
         # First assume same renderer
         if isinstance(current_renderers[0], QgsGraduatedSymbolRenderer):
@@ -300,16 +284,15 @@ def post_process_results(parent, uri, network_data, parameters):
 
         # If it was single renderer originally, apply new graduated renderer
         elif isinstance(current_renderers[0], QgsSingleSymbolRenderer):
-            # Set up new graduated renderer
-            bus_renderer, line_renderer = create_power_renderer()
-            metadata_provider = QgsProviderRegistry.instance().providerMetadata("PandapowerProvider")
-            for i, layer in enumerate(target_layers):
-                if layer.dataProvider().network_type == 'bus':
+            for layer in target_layers:
+                # Build a fresh renderer per layer: a renderer instance must not
+                # be shared between layers, since each layer takes ownership.
+                bus_renderer, line_renderer = create_power_renderer()
+                network_type = layer.dataProvider().network_type
+                if network_type == 'bus':
                     layer.setRenderer(bus_renderer)
-                elif layer.dataProvider().network_type == 'line':
+                elif network_type == 'line':
                     layer.setRenderer(line_renderer)
-                elif layer.dataProvider().network_type == 'junction':
-                    pass
                 layer.triggerRepaint()
 
         # 3. Display results (if needed)
@@ -323,8 +306,6 @@ def post_process_results(parent, uri, network_data, parameters):
             # Memory cleanup
             import gc
             gc.collect()
-            container_count = len(NetworkContainer._networks)
-            print(f"   ✅ {container_count} URIs registered in NetworkContainer")
         except Exception as misc_error:
             print(f"   ❌ Other post-processing failed: {str(misc_error)}")
             # This also doesn't halt the entire process
