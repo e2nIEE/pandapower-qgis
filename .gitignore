@@ -128,3 +128,6 @@ dmypy.json
 # Pyre type checker
 .pyre/
 .idea/
+*.zip
+pandapower-qgis/zip_build/
+zip_build/

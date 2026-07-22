@@ -1,32 +1,102 @@
+name: Release
+
 on:
   release:
-    types: published
+    types: [published]
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up Python 3.8
-        uses: actions/setup-python@v6
+      - uses: actions/checkout@v4
         with:
-          python-version: 3.11
+          # qgis-plugin-ci packages from the git tree and reads the changelog
+          # from history, so a shallow clone silently produces a broken package.
+          fetch-depth: 0
 
-       # Needed if the plugin is using Transifex, to have the lrelease command
-       # - name: Install Qt lrelease
-       #   run: |
-       #    sudo apt-get update
-       #    sudo apt-get install qt5-make qttools5-dev-tools
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Needed if the plugin starts using Transifex, to have the lrelease command
+      # - name: Install Qt lrelease
+      #   run: |
+      #     sudo apt-get update
+      #     sudo apt-get install qt5-make qttools5-dev-tools
 
       - name: Install qgis-plugin-ci
         run: pip3 install qgis-plugin-ci
 
+      - name: Determine the version being released
+        id: version
+        run: |
+          # The release tag, with any leading "v" removed. qgis-plugin-ci writes
+          # this string into metadata.txt verbatim, so releasing tag "v0.0.4"
+          # unstripped would ship "version=v0.0.4".
+          tag="${GITHUB_REF#refs/tags/}"
+          version="${tag#v}"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing tag $tag as version $version"
+
+      - name: Check the tag matches metadata.txt
+        run: |
+          metadata=$(grep '^version=' pandapower-qgis/metadata.txt | cut -d= -f2)
+          if [ "$metadata" != "${{ steps.version.outputs.version }}" ]; then
+            echo "::error::Tag ${{ steps.version.outputs.tag }} does not match metadata.txt (version=$metadata)."
+            echo "Update pandapower-qgis/metadata.txt before tagging."
+            exit 1
+          fi
+          echo "metadata.txt and the tag agree on $metadata."
+
+      - name: Check the changelog has an entry for this version
+        run: |
+          entry=$(qgis-plugin-ci changelog "${{ steps.version.outputs.version }}")
+          if [ -z "$entry" ]; then
+            echo "::error::CHANGELOG.md has no entry for ${{ steps.version.outputs.version }}."
+            echo "Expected a heading of the form: ## ${{ steps.version.outputs.version }} - YYYY-MM-DD"
+            exit 1
+          fi
+          echo "$entry"
+
+      - name: Check the package contains every plugin module
+        run: |
+          qgis-plugin-ci package "${{ steps.version.outputs.version }}"
+          python3 - <<'PY'
+          import glob
+          import os
+          import sys
+          import zipfile
+
+          archive = glob.glob('*.zip')[0]
+          shipped = {
+              os.path.basename(name)
+              for name in zipfile.ZipFile(archive).namelist()
+              if name.endswith('.py')
+          }
+          on_disk = {
+              os.path.basename(path)
+              for path in glob.glob('pandapower-qgis/*.py')
+          }
+
+          missing = sorted(on_disk - shipped)
+          if missing:
+              print('::error::Refusing to release: these modules are missing '
+                    'from the package (most likely never committed to git):')
+              for name in missing:
+                  print('  -', name)
+              sys.exit(1)
+
+          print('All {} plugin modules are present.'.format(len(on_disk)))
+          PY
+          rm -f ./*.zip
+
       - name: Deploy plugin
         run: >-
           qgis-plugin-ci
-          release ${GITHUB_REF/refs\/tags\//}
+          release ${{ steps.version.outputs.version }}
           --github-token ${{ secrets.GITHUB_TOKEN }}
           --osgeo-username ${{ secrets.OSGEO_USER }}
           --osgeo-password ${{ secrets.OSGEO_PASSWORD }}

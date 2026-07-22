@@ -1,0 +1,119 @@
+name: Tests
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - 'feature/**'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+
+    # The QGIS Python bindings cannot be pip-installed, so the tests run inside
+    # the official QGIS image rather than on a bare runner.
+    container:
+      image: qgis/qgis:release-3_44
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --break-system-packages -r pandapower-qgis/requirements.txt
+
+      - name: Show environment
+        run: |
+          python3 -c "import qgis.core, pandapower, numpy, scipy; \
+            print('QGIS   ', qgis.core.Qgis.QGIS_VERSION); \
+            print('pandapower', pandapower.__version__); \
+            print('numpy  ', numpy.__version__); \
+            print('scipy  ', scipy.__version__)"
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          xvfb-run -a python3 -m unittest discover -s test -t . -v
+
+  package:
+    name: Plugin package
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # qgis-plugin-ci reads the changelog from the git history.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install qgis-plugin-ci
+        run: pip3 install qgis-plugin-ci
+
+      - name: Read the plugin version
+        id: version
+        run: |
+          version=$(grep '^version=' pandapower-qgis/metadata.txt | cut -d= -f2)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Plugin version: $version"
+
+      - name: Check the changelog has an entry for this version
+        run: |
+          entry=$(qgis-plugin-ci changelog "${{ steps.version.outputs.version }}")
+          if [ -z "$entry" ]; then
+            echo "::error::CHANGELOG.md has no entry for ${{ steps.version.outputs.version }}."
+            echo "Expected a heading of the form: ## ${{ steps.version.outputs.version }} - YYYY-MM-DD"
+            exit 1
+          fi
+          echo "$entry"
+
+      - name: Build the plugin package
+        run: qgis-plugin-ci package "${{ steps.version.outputs.version }}"
+
+      - name: Check the package contains every plugin module
+        run: |
+          python3 - <<'PY'
+          import glob
+          import os
+          import sys
+          import zipfile
+
+          archive = glob.glob('*.zip')[0]
+          shipped = {
+              os.path.basename(name)
+              for name in zipfile.ZipFile(archive).namelist()
+              if name.endswith('.py')
+          }
+
+          # qgis-plugin-ci packages from git, so a module that was never
+          # committed is silently left out and the plugin fails to load for
+          # users while working perfectly in the developer's checkout.
+          on_disk = {
+              os.path.basename(path)
+              for path in glob.glob('pandapower-qgis/*.py')
+          }
+
+          missing = sorted(on_disk - shipped)
+          if missing:
+              print('::error::These modules exist but are not in the package.')
+              print('Most likely they were never committed to git:')
+              for name in missing:
+                  print('  -', name)
+              sys.exit(1)
+
+          print('All {} plugin modules are present in {}.'.format(
+              len(on_disk), archive))
+          PY
+
+      - name: Upload the package
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-package
+          path: '*.zip'
