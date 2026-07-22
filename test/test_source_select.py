@@ -210,9 +210,10 @@ class SourceSelectWidgetTest(unittest.TestCase):
 
         self.assertEqual(self.session_module.NetworkSession.all_sessions(), [])
 
-    def test_add_emits_one_signal_per_selected_row(self):
-        """Add emits a layer signal for each selection."""
+    def test_add_ungrouped_emits_one_signal_per_selected_row(self):
+        """With grouping off, Add emits a layer signal for each selection."""
         self.widget.load_network(self.path)
+        self.widget.group_checkbox.setChecked(False)
         emitted = []
         self.widget.addVectorLayer.connect(
             lambda uri, name, key: emitted.append((uri, name, key)))
@@ -225,6 +226,7 @@ class SourceSelectWidgetTest(unittest.TestCase):
     def test_emitted_uri_builds_a_valid_layer(self):
         """What Add emits is directly usable as a layer source."""
         self.widget.load_network(self.path)
+        self.widget.group_checkbox.setChecked(False)
         emitted = []
         self.widget.addVectorLayer.connect(
             lambda uri, name, key: emitted.append((uri, name, key)))
@@ -238,6 +240,78 @@ class SourceSelectWidgetTest(unittest.TestCase):
         layer = QgsVectorLayer(uri, name, key)
         self.assertTrue(layer.isValid())
         self.assertGreater(layer.featureCount(), 0)
+
+    def test_add_grouped_places_layers_in_a_named_group(self):
+        """With grouping on, Add puts the layers in a group per network."""
+        from qgis.core import QgsProject
+
+        QgsProject.instance().removeAllMapLayers()
+        root = QgsProject.instance().layerTreeRoot()
+        for group in root.findGroups():
+            root.removeChildNode(group)
+
+        self.widget.load_network(self.path)
+        self.assertTrue(self.widget.group_checkbox.isChecked())
+
+        self._select_rows(0, 1)
+        self.widget.addButtonClicked()
+
+        expected = os.path.basename(self.path).rsplit('.', 1)[0]
+        group = root.findGroup(expected)
+        self.assertIsNotNone(group)
+        self.assertEqual(len(group.findLayers()), 2)
+
+        QgsProject.instance().removeAllMapLayers()
+
+    def test_add_selected_button_adds_every_selected_table(self):
+        """One click on "Add selected" adds the whole selection.
+
+        Regression guard: the only add triggers used to be the dialog's own
+        Add button and a double-click, and a double-click collapses the
+        selection to the clicked row first — so a multi-row selection could
+        only ever be added one layer at a time.
+        """
+        from qgis.core import QgsProject
+
+        QgsProject.instance().removeAllMapLayers()
+        root = QgsProject.instance().layerTreeRoot()
+        for group in list(root.findGroups()):
+            root.removeChildNode(group)
+
+        self.widget.load_network(self.path)
+        self.widget.table.selectAll()
+        selected = len(self.widget.selected_rows())
+        self.assertGreater(selected, 1)
+
+        self.widget.add_button.click()
+
+        self.assertEqual(len(QgsProject.instance().mapLayers()), selected)
+        QgsProject.instance().removeAllMapLayers()
+
+    def test_double_click_adds_only_the_clicked_row(self):
+        """Double-clicking adds one table, not the whole selection."""
+        from qgis.core import QgsProject
+
+        QgsProject.instance().removeAllMapLayers()
+        self.widget.load_network(self.path)
+        self.widget.table.selectAll()
+
+        index = self.widget.table.model().index(0, 0)
+        self.widget._on_row_double_clicked(index)
+
+        self.assertEqual(len(QgsProject.instance().mapLayers()), 1)
+        QgsProject.instance().removeAllMapLayers()
+
+    def test_empty_result_tables_cannot_be_selected(self):
+        """A res_* table with no rows is greyed out, so Add never opens it."""
+        self.widget.load_network(self.path)
+
+        self.widget.table.selectAll()
+        selected = {row['table'] for row in self.widget.selected_rows()}
+
+        for row in self.widget.rows:
+            if row['table'].startswith('res_') and row['features'] == 0:
+                self.assertNotIn(row['table'], selected)
 
     def test_add_without_a_selection_emits_nothing(self):
         """Pressing Add with nothing selected is a no-op, not an error."""

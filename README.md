@@ -12,9 +12,8 @@ and no separate export step to get your work back out.
 ## Overview
 
 - [Opening a network](#opening-a-network)
-  - [From the Browser](#from-the-browser)
   - [From the Data Source Manager](#from-the-data-source-manager)
-  - [What the tree shows](#what-the-tree-shows)
+  - [What the dialog shows](#what-the-dialog-shows)
 - [Editing the network](#editing-the-network)
 - [Run a power flow](#run-a-power-flow)
 - [Export to pandapower](#export-to-pandapower)
@@ -23,48 +22,53 @@ and no separate export step to get your work back out.
 
 ## Opening a network
 
-### From the Browser
-
-Expand any pandapower `.json` in the QGIS **Browser** panel and it opens like a
-database, listing the tables it contains. Double-click a table, or drag it onto
-the canvas, to add it as a layer.
-
-Right-clicking a network offers *Add all geometry layers to project*,
-*Run power flow*, *Save network* and *Reload from disk*.
-
 ### From the Data Source Manager
 
 **Layer → Data Source Manager → pandapower** — the entry sits with the database
-providers. Pick a network file, select one or more tables, press **Add**.
+providers, alongside PostgreSQL, SAP HANA and Oracle. Pick a network file and
+press **Add**.
+
+The tables that carry geometry are preselected, so opening a network and putting
+it on the map takes two clicks. Three buttons drive the list:
+
+- **Select all** — every table, including the attribute-only ones
+- **Select map layers** — only `bus` and `line`, the ones that draw on the canvas
+- **Add selected** — adds the whole selection at once
+
+Double-clicking a single row adds just that table.
+
+With **Add layers in a group named after the network** ticked (the default), the
+layers land in a layer group named after the file, rather than loose at the top
+of the Layers panel.
 
 The dialog lists each table with its geometry type, voltage level and feature
-count, and remembers recently opened networks.
+count, and remembers recently opened networks. A `res_*` table with no results
+yet is greyed out and cannot be selected — run a power flow first.
 
-### What the tree shows
+### What the dialog shows
 
 ```
-mv_oberrhein.json
-├── bus                  ← splits by voltage level
-│   ├── 20.0 kV
-│   └── 110.0 kV
-├── line
-│   └── 20.0 kV
-├── trafo                ← attribute-only table
-├── load
-├── sgen
-├── switch
-└── Results
-    ├── res_bus          ← greyed out until a power flow has run
-    └── res_line
+Network: /data/mv_oberrhein.json                    [Browse...]
+
+  Table      Geometry     Level    Features
+  bus        Point        20.0          177
+  bus        Point        110.0           2
+  line       LineString   20.0          181
+  trafo                                   2
+  load                                  147
+  sgen                                  153
+  switch                                322
+  res_bus                               179
+  res_line                              181
 ```
 
-- `bus` and `line` carry geometry and are split by voltage level.
-- Tables without geometry (`trafo`, `load`, `switch`, …) open as plain attribute
-  tables, exactly like a non-spatial table in a database.
+- `bus` and `line` carry geometry and are listed once per voltage level.
+- Tables without geometry (`trafo`, `load`, `switch`, …) are listed too and open
+  as plain attribute tables, exactly like a non-spatial table in a database.
 - Only tables that actually contain rows are listed. A pandapower network defines
   many more tables than a typical grid uses.
-- Result tables live under **Results**. An empty one is still listed, greyed out —
-  double-click it to run a power flow.
+- `res_*` result tables are listed as well; an empty one is greyed out until a
+  power flow has produced results.
 
 Result columns are also **merged into** the `bus` and `line` layers, which is what
 lets the renderers colour buses by `vm_pu` and lines by `loading_percent`.
@@ -178,8 +182,9 @@ writes the file.
 ## Run a power flow
 
 ![run_icon][run_icon]
-This icon is in the plugin toolbar. It is also on the context menu of a network
-or the **Results** group in the Browser.
+This icon is in the plugin toolbar. It runs on the network of the layer selected
+in the Layers panel, or on the first pandapower network in the project if
+nothing is selected. Open a network first.
 
 ![run_guide]
 

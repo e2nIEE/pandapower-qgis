@@ -13,15 +13,15 @@ import os
 from qgis.core import Qgis, QgsProviderRegistry
 from qgis.gui import QgsAbstractDataSourceWidget, QgsSourceSelectProvider
 from qgis.PyQt.QtCore import QSettings, Qt
-from qgis.PyQt.QtWidgets import (QAbstractItemView, QComboBox, QFileDialog,
-                                 QHBoxLayout, QHeaderView, QLabel,
+from qgis.PyQt.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox,
+                                 QFileDialog, QHBoxLayout, QHeaderView, QLabel,
                                  QPushButton, QTableWidget, QTableWidgetItem,
                                  QVBoxLayout)
 
 from .network_session import KIND_POWER, NetworkSession
 from .pandapower_data_items import list_tables, sniff_network_kind, table_levels
 from .pandapower_layer_factory import PROVIDER_KEY
-from .pandapower_uri import geometry_type_for, layer_name_for
+from .pandapower_uri import geometry_type_for, has_geometry, layer_name_for
 
 # QSettings key under which recently opened networks are remembered.
 RECENT_KEY = 'pandapower-qgis/recentNetworks'
@@ -193,8 +193,40 @@ class PandapowerSourceSelectWidget(QgsAbstractDataSourceWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(
             COL_TABLE, QHeaderView.Stretch)
-        self.table.doubleClicked.connect(lambda _: self.addButtonClicked())
+        self.table.doubleClicked.connect(self._on_row_double_clicked)
         layout.addWidget(self.table, 1)
+
+        # Quick selection. Opening a whole network is the common case, so it
+        # gets a button rather than requiring the user to rubber-band the list.
+        buttons = QHBoxLayout()
+
+        select_all = QPushButton('Select all')
+        select_all.clicked.connect(self.table.selectAll)
+        buttons.addWidget(select_all)
+
+        select_map = QPushButton('Select map layers')
+        select_map.setToolTip(
+            'Select only the tables that carry geometry (bus, line)')
+        select_map.clicked.connect(self.select_geometry_tables)
+        buttons.addWidget(select_map)
+
+        # Adds every selected table at once. The dialog's own Add button is not
+        # always wired up when the widget is embedded in the Data Source
+        # Manager, and double-clicking a row collapses the selection to that
+        # single row first, so neither reliably adds a multi-row selection.
+        self.add_button = QPushButton('Add selected')
+        self.add_button.setToolTip('Add every selected table as a layer')
+        self.add_button.setDefault(True)
+        self.add_button.clicked.connect(self.addButtonClicked)
+        buttons.addWidget(self.add_button)
+
+        buttons.addStretch(1)
+
+        self.group_checkbox = QCheckBox('Add layers in a group named after the network')
+        self.group_checkbox.setChecked(True)
+        buttons.addWidget(self.group_checkbox)
+
+        layout.addLayout(buttons)
 
         self.status = QLabel('Choose a pandapower network file.')
         layout.addWidget(self.status)
@@ -274,8 +306,11 @@ class PandapowerSourceSelectWidget(QgsAbstractDataSourceWidget):
         self.path = path
         remember_network(path)
         self._populate_listing()
-        self._set_status('{} table(s) in {}'.format(
-            len(self.rows), os.path.basename(path)))
+        # Preselect the geometry tables: opening a network to see it on the map
+        # is the common case, so Add works straight away.
+        self.select_geometry_tables()
+        self._set_status('{} table(s) in {}. Press Add to open the selected '
+                         'ones.'.format(len(self.rows), os.path.basename(path)))
         return True
 
     # -- listing ----------------------------------------------------------
@@ -298,12 +333,14 @@ class PandapowerSourceSelectWidget(QgsAbstractDataSourceWidget):
             features = QTableWidgetItem(str(row['features']))
             features.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
-            # An empty result table cannot be opened usefully; grey the row so
-            # it reads the same way as in the Browser tree.
+            # An empty result table holds nothing to show, so the row is greyed
+            # out and made unselectable. "Select all" therefore skips it, which
+            # is intended: adding it would produce an empty layer.
             if row['table'].startswith('res_') and row['features'] == 0:
                 for item in (name, geometry, level, features):
                     item.setFlags(Qt.NoItemFlags)
-                name.setToolTip('No results yet - run a power flow')
+                    item.setToolTip('No results yet - run a power flow first')
+                name.setText('{}  (no results)'.format(row['table']))
 
             self.table.setItem(index, COL_TABLE, name)
             self.table.setItem(index, COL_GEOMETRY, geometry)
@@ -313,6 +350,41 @@ class PandapowerSourceSelectWidget(QgsAbstractDataSourceWidget):
         self.table.resizeColumnsToContents()
         self.table.horizontalHeader().setSectionResizeMode(
             COL_TABLE, QHeaderView.Stretch)
+
+    def _on_row_double_clicked(self, index):
+        """Add the double-clicked table.
+
+        Qt collapses the selection to the clicked row before the double-click
+        arrives, so this adds exactly that one table. Use "Add selected" to add
+        a multi-row selection.
+
+        Args:
+            index: QModelIndex of the row that was double-clicked.
+        """
+        if not index.isValid() or not self.path:
+            return
+
+        row = index.row()
+        if 0 <= row < len(self.rows):
+            self._add_rows([self.rows[row]])
+
+    def select_geometry_tables(self):
+        """Select every row whose table carries geometry.
+
+        These are the layers that actually show up on the map, and are what
+        most users want when opening a network.
+        """
+        from qgis.PyQt.QtCore import QItemSelection, QItemSelectionModel
+
+        model = self.table.selectionModel()
+        model.clearSelection()
+
+        for index, row in enumerate(self.rows):
+            if not has_geometry(row['table']):
+                continue
+            model.select(
+                self.table.model().index(index, 0),
+                QItemSelectionModel.Select | QItemSelectionModel.Rows)
 
     def selected_rows(self):
         """Return the descriptions of the currently selected rows.
@@ -327,7 +399,11 @@ class PandapowerSourceSelectWidget(QgsAbstractDataSourceWidget):
     # -- QgsAbstractDataSourceWidget ---------------------------------------
 
     def addButtonClicked(self):
-        """Emit one addLayer() per selected table."""
+        """Add every selected table to the project.
+
+        Called both by the widget's own "Add selected" button and by the Data
+        Source Manager's Add button.
+        """
         if not self.path:
             self._set_status('Choose a network file first.', error=True)
             return
@@ -337,6 +413,67 @@ class PandapowerSourceSelectWidget(QgsAbstractDataSourceWidget):
             self._set_status('Select at least one table.', error=True)
             return
 
+        self._add_rows(selection)
+
+    def _add_rows(self, rows):
+        """Add the given tables to the project.
+
+        Args:
+            rows: Row dicts to add.
+        """
+        if self.group_checkbox.isChecked():
+            self._add_layers_grouped(rows)
+        else:
+            self._add_layers_flat(rows)
+
+    def _add_layers_grouped(self, selection):
+        """Add the selected tables into a group named after the network.
+
+        The layers are built and placed here rather than emitted as signals,
+        because QGIS drops a signalled layer at the top of the tree and there
+        is no reliable way to catch it again afterwards to group it.
+
+        Args:
+            selection: Row dicts to add.
+        """
+        from qgis.core import QgsProject
+        from .pandapower_layer_factory import create_layer
+
+        project = QgsProject.instance()
+        group_name = os.path.basename(self.path).rsplit('.', 1)[0]
+
+        root = project.layerTreeRoot()
+        group = root.findGroup(group_name) or root.addGroup(group_name)
+
+        added = 0
+        failed = []
+        for row in selection:
+            layer = create_layer(
+                self.path, row['table'], level=row['level'],
+                epsg=getattr(self, 'epsg', None))
+            if not layer.isValid():
+                failed.append(row['table'])
+                continue
+            # addMapLayer(layer, False) keeps QGIS from putting it at the root,
+            # so it can be placed inside the group instead.
+            project.addMapLayer(layer, False)
+            group.addLayer(layer)
+            added += 1
+
+        if failed:
+            self._set_status(
+                'Added {} layer(s); could not open: {}'.format(
+                    added, ', '.join(failed)), error=True)
+        else:
+            self._set_status('Added {} layer(s) to group "{}".'.format(
+                added, group_name))
+
+    def _add_layers_flat(self, selection):
+        """Add the selected tables at the top level of the project.
+
+        Args:
+            selection: Row dicts to add.
+        """
         from .pandapower_layer_factory import build_uri
 
         for row in selection:
@@ -344,6 +481,8 @@ class PandapowerSourceSelectWidget(QgsAbstractDataSourceWidget):
                             level=row['level'], epsg=getattr(self, 'epsg', None))
             name = layer_name_for(self.path, row['table'], row['level'])
             self._emit_add_layer(uri, name)
+
+        self._set_status('Added {} layer(s).'.format(len(selection)))
 
     def _emit_add_layer(self, uri, name):
         """Ask QGIS to add one layer.

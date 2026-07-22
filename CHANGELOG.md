@@ -9,13 +9,22 @@ pandapower networks are a data source, not an import.
 **Networks are now opened, not imported.**
 
 * pandapower appears in the **Data Source Manager** alongside PostgreSQL and SAP HANA.
-* pandapower `.json` files expand in the **Browser** panel, listing their tables.
-  Double-click or drag a table to add it as a layer.
+  Pick a network file, select the tables you want, press Add.
 * Every pandapower table can be opened, not just `bus` and `line`. Tables without
   geometry (`trafo`, `load`, `switch`, …) open as plain attribute tables.
-* `res_*` tables are listed under **Results**, greyed out until a power flow has run,
-  while their columns stay merged into the `bus`/`line` layers for styling.
-* Only tables that contain rows are listed, so the tree stays readable.
+* `res_*` tables can be opened in their own right, while their columns stay merged
+  into the `bus`/`line` layers for styling.
+* Only tables that contain rows are listed, so the dialog stays readable.
+
+**Known limitation**
+
+* Expanding a pandapower `.json` directly in the **Browser** panel is not available.
+  Returning a Python subclass of `QgsDataCollectionItem` from
+  `QgsDataItemProvider.createDataItem()` is unsafe on QGIS 3.44 — the object loses
+  its Python half once QGIS stores it, and expanding the node crashes QGIS. This
+  reproduces without this plugin, so it is a binding limitation rather than
+  something the plugin can work around. Use the Data Source Manager instead; the
+  code is kept behind `ENABLE_BROWSER_TREE` in `pandapower_qgis.py`.
 
 **Edits are written on commit.**
 

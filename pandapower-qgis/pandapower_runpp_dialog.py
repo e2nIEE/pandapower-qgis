@@ -8,7 +8,7 @@ from qgis.PyQt.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout,
                                  QProgressBar, QTextEdit, QPushButton, QFrame, QComboBox)
 from qgis.PyQt.QtCore import Qt, QThread, pyqtSignal
 from qgis.core import QgsProviderRegistry
-from .network_session import NetworkSession
+from .network_session import NetworkSession, KIND_PIPES
 from .pandapower_uri import decode_uri
 
 
@@ -217,40 +217,46 @@ class ppRunDialog(QDialog):
         self.button_box.rejected.connect(self.reject)
 
 
+    def setup_session(self, session):
+        """
+        Point the dialog at an open network.
+        The session is passed in directly rather than being looked up from a
+        layer URI: the provider does not override dataSourceUri(), so a layer's
+        reported source cannot be relied on to find the network again.
+        Args:
+            session (NetworkSession): The open network to calculate.
+        """
+        self.session = session
+
+        try:
+            if session is None or session.net is None:
+                self.show_error("No pandapower network is open.")
+                return
+
+            self.network_type = ('pipes' if session.kind == KIND_PIPES
+                                 else 'power')
+            if self.network_type == 'power':
+                self.update_power_network_info()
+            else:
+                self.update_pipes_network_info()
+
+            self.file_path_value.setText(os.path.basename(session.path))
+            self.file_path_value.setToolTip(session.path)  # full path as tooltip
+        except Exception as e:
+            self.show_error(f"Failed to setup network: {str(e)}")
+
+
     def setup_network(self, uri):
         """
-        Set Network informations.
+        Deprecated: point the dialog at a network by layer URI.
+        Kept so any external caller keeps working; prefer setup_session().
         Args:
             uri (str): Network URI
         """
-        self.uri = uri
-
-        try:
-            provider_metadata = QgsProviderRegistry.instance().providerMetadata("PandapowerProvider")
-            uri_parts = decode_uri(provider_metadata.decodeUri(uri))
-
-            self.session = NetworkSession.get(uri_parts.get('path', ''))
-
-            if not self.session:
-                self.show_error("Failed to load network data from session")
-                return
-
-            network_type = uri_parts.get('table') or ''
-            if network_type in ['bus', 'line']:
-                self.network_type = 'power'
-                self.update_power_network_info()
-            elif network_type in ['junction', 'pipe']:
-                self.network_type = 'pipes'
-                self.update_pipes_network_info()
-            else:
-                self.show_error(f"Unknown network type: {network_type}")
-                return
-
-            file_path = uri_parts.get('path', 'Unknown')
-            self.file_path_value.setText(os.path.basename(file_path))
-            self.file_path_value.setToolTip(file_path)  # Show full path as a tooltip
-        except Exception as e:
-            self.show_error(f"Failed to setup network: {str(e)}")
+        provider_metadata = QgsProviderRegistry.instance().providerMetadata(
+            "PandapowerProvider")
+        uri_parts = decode_uri(provider_metadata.decodeUri(uri))
+        self.setup_session(NetworkSession.get(uri_parts.get('path', '')))
 
 
     def update_power_network_info(self):
@@ -324,7 +330,7 @@ class ppRunDialog(QDialog):
 
     def start_calculation(self):
         try:
-            if not self.uri:
+            if self.session is None:
                 self.show_error("Select a network first!")
                 return
 
@@ -340,8 +346,8 @@ class ppRunDialog(QDialog):
             self.add_progress_message("⚡ Executing power grid calculation...")
             QtCore.QCoreApplication.processEvents()
 
-            from .ppqgis_runpp import run_network
-            success, error_message = run_network(None, self.uri, parameters)
+            from .ppqgis_runpp import run_session
+            success, error_message = run_session(None, self.session, parameters)
 
             if success:
                 self.add_progress_message("✅ Calculation completed!")

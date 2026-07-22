@@ -13,9 +13,65 @@ from .renderer_utils import create_power_renderer
 from .network_session import NetworkSession
 
 
+def run_session(parent, session, parameters):
+    """
+    Run a power flow on an open network, from calculation to post-processing.
+    Args:
+        parent: Parent interface object
+        session (NetworkSession): The open network to calculate
+        parameters (dict): Calculation settings
+    Returns:
+        tuple: (success, message) - overall workflow status
+    """
+    try:
+        if session is None:
+            message = "No pandapower network is open."
+            show_error_message(parent, message)
+            return False, message
+
+        net = session.net
+        if net is None:
+            message = "Network object is not valid."
+            show_error_message(parent, message)
+            return False, message
+
+        # Execute calculation. pandapower mutates the network in place, so the
+        # results land directly on the object every layer of this file shares.
+        success, result_message, updated_net = execute_calculation(net, parameters)
+        if not success:
+            show_error_message(parent, f"Calculation failed: {result_message}")
+            return False, result_message
+
+        try:
+            # Keep the session pointing at the calculated network. This is
+            # normally the very same object, but an implementation that
+            # returns a new one is handled correctly too.
+            if updated_net is not None:
+                session.net = updated_net
+            session.mark_dirty()
+            # Post-process calculation (update results and colors)
+            post_process_results(parent, session, parameters)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+            # Treat as successful calculation even if post-processing fails
+
+        show_success_message(parent, "Calculation completed successfully!",
+                             result_message)
+        return True, ""
+
+    except Exception as e:
+        message = f"Unexpected error occurred: {str(e)}"
+        import traceback
+        traceback.print_exc()
+        show_error_message(parent, message)
+        return False, message
+
+
 def run_network(parent, uri, parameters):
     """
-    Run network calculation workflow from data retrieval to post-processing.
+    Deprecated: run a power flow addressed by layer URI.
+    Kept so any external caller keeps working; prefer run_session().
     Args:
         parent: Parent interface object
         uri: Network identifier
@@ -23,50 +79,10 @@ def run_network(parent, uri, parameters):
     Returns:
         tuple: (success, message) - overall workflow status
     """
-    try:
-        # Get the shared session for the file this URI points at
-        metadata_provider = QgsProviderRegistry.instance().providerMetadata("PandapowerProvider")
-        file_path = metadata_provider.decodeUri(uri).get('path')
-        session = NetworkSession.get(file_path)
-
-        if session is None:
-            error_message = "Network data not found."
-            show_error_message(parent, error_message)
-            return False
-
-        # Extract network object
-        net = session.net
-        if net is None:
-            error_message = "Network object is not valid."
-            show_error_message(parent, error_message)
-            return False
-
-        # Execute calculation. pandapower mutates the network in place, so the
-        # results land directly on the object every layer of this file shares.
-        success, result_message, updated_net = execute_calculation(net, parameters)
-        if success:
-            try:
-                # Keep the session pointing at the calculated network. This is
-                # normally the very same object, but an implementation that
-                # returns a new one is handled correctly too.
-                if updated_net is not None:
-                    session.net = updated_net
-                session.mark_dirty()
-                # Post-process calculation (update results and colors)
-                post_process_results(parent, uri, session, parameters)
-            except Exception as post_error:
-                import traceback
-                # Treat as successful calculation even if post-processing fails
-            show_success_message(parent, "Calculation completed successfully!", result_message)
-        else:
-            show_error_message(parent, f"Calculation failed: {result_message}")
-            return False, result_message
-    except Exception as e:
-        error_message = f"Unexpected error occurred: {str(e)}"
-        import traceback
-        show_error_message(parent, error_message)
-        return False
-    return True, ""
+    metadata_provider = QgsProviderRegistry.instance().providerMetadata(
+        "PandapowerProvider")
+    file_path = metadata_provider.decodeUri(uri).get('path')
+    return run_session(parent, NetworkSession.get(file_path), parameters)
 
 
 def execute_calculation(net, parameters):
@@ -243,7 +259,7 @@ def generate_power_result_message(net, function_name):
         return f"Calculation completed (message generation error: {str(e)})"
 
 
-def post_process_results(parent, uri, session, parameters):
+def post_process_results(parent, session, parameters):
     """
     Perform post-calculation cleanup tasks.
     - Refresh every layer of the calculated network
@@ -251,7 +267,6 @@ def post_process_results(parent, uri, session, parameters):
     - Handle result display options
     Args:
         parent: Parent object
-        uri (str): Network URI
         session (NetworkSession): Session holding the calculated network
         parameters (dict): User setting parameters
     """

@@ -28,6 +28,13 @@ from qgis.core import Qgis, QgsDataCollectionItem, QgsDataItemProvider, \
     QgsLayerItem, QgsMimeDataUtils
 from qgis.PyQt.QtGui import QIcon
 
+# The sip module moved into the PyQt package; a bare "import sip" fails on a
+# modern PyQt5. qgis.PyQt.sip is the shim QGIS itself uses.
+try:
+    from qgis.PyQt import sip
+except ImportError:  # pragma: no cover - very old PyQt
+    import sip
+
 from .network_session import KIND_PIPES, KIND_POWER, NetworkSession
 from .pandapower_layer_factory import PROVIDER_KEY, build_uri
 from .pandapower_uri import LEVELLED_TABLES, has_geometry, layer_name_for
@@ -85,6 +92,38 @@ def _icon(name):
     """
     path = os.path.join(os.path.dirname(__file__), name)
     return QIcon(path) if os.path.exists(path) else QIcon()
+
+
+def _release_to_cpp(items_):
+    """Hand freshly created browser items over to C++ ownership.
+
+    Items returned to the browser model must be constructed with **no parent**:
+    QgsDataItem's documentation says "Children are not expected to have parent
+    set", and QGIS parents them itself. Setting the parent up front makes it
+    happen twice and crashes QGIS when the tree is expanded.
+
+    The items are also Python subclasses. Two failure modes have to be avoided
+    at once, and ``sip.transferto(item, None)`` avoids both:
+
+    * If Python keeps owning the wrapper, it may be garbage collected while the
+      browser model still points at the C++ object — a use-after-free.
+    * If Python keeps a *reference* to guard against that, the wrapper instead
+      outlives the C++ object QGIS deletes, and the mismatch corrupts the heap
+      at collection time.
+
+    Transferring ownership to C++ (``None`` target) makes sip stop tracking the
+    wrapper's lifetime entirely: the object lives and dies with its C++ owner,
+    exactly like the items a C++ provider returns, and the Python subclass
+    behaviour is preserved for as long as that object exists.
+
+    Args:
+        items_: The items about to be returned to the browser model.
+    Returns:
+        The same list, for use as ``return _release_to_cpp(items_)``.
+    """
+    for item in items_:
+        sip.transferto(item, None)
+    return items_
 
 
 def list_tables(net):
@@ -264,9 +303,9 @@ class PandapowerLevelledTableItem(QgsDataCollectionItem):
         children = []
         for level in self.levels:
             children.append(PandapowerTableItem(
-                self, '{} {}'.format(level, unit), self.file_path,
+                None, '{} {}'.format(level, unit), self.file_path,
                 self.table, level=level, epsg=self.epsg))
-        return children
+        return _release_to_cpp(children)
 
 
 class PandapowerResultsItem(QgsDataCollectionItem):
@@ -303,12 +342,12 @@ class PandapowerResultsItem(QgsDataCollectionItem):
         children = []
         for table, row_count in self.tables:
             item = PandapowerTableItem(
-                self, table, self.file_path, table, epsg=self.epsg,
+                None, table, self.file_path, table, epsg=self.epsg,
                 enabled=row_count > 0)
             if row_count == 0:
                 item.setToolTip('No results yet - run a power flow')
             children.append(item)
-        return children
+        return _release_to_cpp(children)
 
 
 class PandapowerNetworkItem(QgsDataCollectionItem):
@@ -374,10 +413,10 @@ class PandapowerNetworkItem(QgsDataCollectionItem):
                     # Split into one child per level only when there is more
                     # than one; a single level would add a pointless nesting.
                     children.append(PandapowerLevelledTableItem(
-                        self, table, self.file_path, table, levels, epsg))
+                        None, table, self.file_path, table, levels, epsg))
                 else:
                     children.append(PandapowerTableItem(
-                        self, table, self.file_path, table,
+                        None, table, self.file_path, table,
                         level=levels[0] if levels else None, epsg=epsg))
 
             if results:
@@ -386,10 +425,10 @@ class PandapowerNetworkItem(QgsDataCollectionItem):
                     df = getattr(net, table, None)
                     counts.append((table, 0 if df is None else len(df)))
                 children.append(PandapowerResultsItem(
-                    self, self.file_path, counts, epsg,
+                    None, self.file_path, counts, epsg,
                     has_results=any(count for _, count in counts)))
 
-            return children
+            return _release_to_cpp(children)
         finally:
             # createChildren() only needed the network to enumerate tables; the
             # reference is dropped so the session lives exactly as long as the
