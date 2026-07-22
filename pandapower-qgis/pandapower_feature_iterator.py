@@ -26,28 +26,38 @@ class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
         self._index = 0
         self._is_valid = False
 
+        # Attribute-only tables (trafo, load, switch, res_*) have no 'geo'
+        # column, so geometry handling is skipped entirely for them.
+        self._has_geometry = self._provider.has_geometry()
+
         # Coordinate transformation settings - might not be needed for pandapower
         self._transform = QgsCoordinateTransform()
-        if (request.destinationCrs().isValid() and
-                request.destinationCrs() != source.get_provider().crs()):
+        if (self._has_geometry and
+                request.destinationCrs().isValid() and
+                request.destinationCrs() != self._provider.crs()):
             self._transform = QgsCoordinateTransform(
-                self._provider().crs(),  # Source coordinate system
+                self._provider.crs(),  # Source coordinate system
                 request.destinationCrs(),  # Destination coordinate system
                 request.transformContext()  # Transformation context
             )
 
         # Prepare geometry data
-        # self.df_geodata = getattr(self._provider.net, f'{self._provider.network_type}_geodata')
-        self.df_geodata = getattr(self._provider.net, f'{self._provider.network_type}').geo
+        self.df_geodata = None
+        if self._has_geometry:
+            self.df_geodata = getattr(
+                self._provider.net, self._provider.network_type).geo
 
         # Prepare main dataframe
         self.df = self._provider.df
 
         # Handle validation later via a separate method or flag
-        self._is_valid = (self.df_geodata is not None and self.df is not None)
+        self._is_valid = self.df is not None
+        if self._has_geometry:
+            self._is_valid = self._is_valid and self.df_geodata is not None
 
         if self._is_valid:
-            self.df_geodata.sort_index(inplace=True)
+            if self.df_geodata is not None:
+                self.df_geodata.sort_index(inplace=True)
             self.df.sort_index(inplace=True)
         else:
             print("Warning: Dataframe is empty in PandapowerFeatureIterator.")
@@ -75,9 +85,10 @@ class PandapowerFeatureIterator(QgsAbstractFeatureIterator):
         feature.setFields(self._provider.fields())
         feature.setValid(True)
 
-        # Geometry settings
+        # Geometry settings. Attribute-only tables skip this entirely: the
+        # feature is returned with attributes and no geometry.
         has_valid_geometry = False
-        if idx in self.df_geodata.index:
+        if self._has_geometry and idx in self.df_geodata.index:
             geo_str = self.df_geodata.loc[idx]
             # Check if geo data exists (not None and not NaN) - simbench may have no line.geo
             geo_exists = geo_str is not None and not pd.isna(geo_str)

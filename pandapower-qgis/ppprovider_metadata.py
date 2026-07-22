@@ -1,7 +1,9 @@
+import os
 import re
 from typing import Dict
 from .pandapower_provider import PandapowerProvider
 from qgis.core import QgsProviderMetadata, QgsReadWriteContext
+from qgis.PyQt.QtGui import QIcon
 
 class PandapowerProviderMetadata(QgsProviderMetadata):
     def __init__(self):
@@ -49,51 +51,53 @@ class PandapowerProviderMetadata(QgsProviderMetadata):
 
     def capabilities(self):
         """
-        QGIS에게 "이 Provider는 파일 기반 데이터야!"라고 알려줍니다.
-        이것이 있어야:
-        - Layer → Add Layer → Add Vector Layer 메뉴에서
-        - "File" 소스 타입 선택 시
-        - 파일 선택 대화상자에 우리 provider가 나타납니다!
+        Declare what this provider metadata can do.
+        A pandapower network is reached through the Data Source Manager entry and
+        the Browser tree, not through the generic "Add Vector Layer -> File"
+        dialog: that path is what made the plugin feel like an import step.
+        Note this returns ProviderMetadataCapability values. The previous
+        implementation returned FileBasedUris, which belongs to the unrelated
+        ProviderCapability enum returned by providerCapabilities().
         Returns:
-            FileBasedUris 플래그 - 파일 기반 데이터 소스임을 표시
+            QgsProviderMetadata.ProviderMetadataCapabilities
+        """
+        return QgsProviderMetadata.ProviderMetadataCapability.LayerTypesForUri
+
+
+    def providerCapabilities(self):
+        """
+        Declare provider-level capabilities.
+        The URI does address a file on disk, so FileBasedUris stays accurate;
+        it belongs here rather than in capabilities().
+        Returns:
+            QgsProviderMetadata.ProviderCapabilities
         """
         return QgsProviderMetadata.FileBasedUris
 
 
     def filters(self, filterType):
         """
-        이 메서드로 파일 필터를 정의합니다!
-
-        "Add Vector Layer" → "File" 선택 시
-        드롭다운에 나타나는 파일 형식 목록을 정의합니다.
-
-        예: "ESRI Shapefiles (*.shp)", "GeoJSON (*.geojson)" 같은 것들
-
+        Define the file filters offered for this provider.
+        Deliberately empty: advertising "*.json" as a generic vector file filter
+        put pandapower networks into the "Add Vector Layer -> File" dialog, where
+        opening one behaves like an import rather than a live connection. Use the
+        "pandapower" entry in the Data Source Manager or the Browser instead.
         Args:
-            filterType: QGIS가 요청하는 필터 타입
-                       (Vector/Raster/Mesh 등)
-
+            filterType: Filter type requested by QGIS (Vector/Raster/Mesh/...)
         Returns:
-            str: 파일 필터 문자열
-                 형식: "설명 (*.확장자);;다른설명 (*.확장자)"
+            str: Empty string, so no filter is contributed
         """
-        if filterType == QgsProviderMetadata.FilterType.FilterVector:
-            # 세미콜론 2개(;;)로 여러 필터 구분
-            return "Pandapower Networks (*.json);;All files (*.*)"
         return ""
 
 
     def icon(self):
         """
-        🎨 Provider 아이콘 (선택사항이지만 있으면 좋아요!)
-
-        Data Source Manager와 Browser에 표시될 아이콘입니다.
-        pp.png 파일이 플러그인 폴더에 있다면 사용합니다.
-
+        Provider icon shown in the Data Source Manager and the Browser.
+        Uses pp.png from the plugin folder when it is available.
         Returns:
-            QIcon: Provider 아이콘
+            QIcon: Provider icon, or an empty icon if the file is missing
         """
         icon_path = os.path.join(os.path.dirname(__file__), 'pp.png')
         if os.path.exists(icon_path):
             return QIcon(icon_path)
-        return QIcon()  # 아이콘 없으면 빈 아이콘 반환
+        return QIcon()  # Fall back to an empty icon

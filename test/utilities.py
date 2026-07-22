@@ -1,61 +1,47 @@
 # coding=utf-8
-"""Common functionality used by regression tests."""
+"""Common functionality used by the test suite.
 
-import sys
+Run the tests from the repository root with the QGIS Python interpreter, e.g.
+on Windows with an OSGeo4W install::
+
+    C:\\OSGeo4W\\bin\\python-qgis.bat -m unittest discover -s test -t .
+"""
+
 import logging
-
+import sys
 
 LOGGER = logging.getLogger('QGIS')
-QGIS_APP = None  # Static variable used to hold hand to running QGIS app
-CANVAS = None
-PARENT = None
-IFACE = None
+
+QGIS_APP = None  # Holds the single QgsApplication used by the whole test run
 
 
 def get_qgis_app():
-    """ Start one QGIS application to test against.
+    """Start one QgsApplication to test against.
 
-    :returns: Handle to QGIS app, canvas, iface and parent. If there are any
-        errors the tuple members will be returned as None.
-    :rtype: (QgsApplication, CANVAS, IFACE, PARENT)
+    The instance is created once per process and reused, since QGIS does not
+    support more than one QgsApplication per process.
 
-    If QGIS is already running the handle to that app will be returned.
+    :returns: The running QgsApplication, or None if QGIS cannot be imported.
+    :rtype: QgsApplication
     """
-
-    try:
-        from qgis.PyQt import QtGui, QtCore
-        from qgis.core import QgsApplication
-        from qgis.gui import QgsMapCanvas
-        from .qgis_interface import QgisInterface
-    except ImportError:
-        return None, None, None, None
-
     global QGIS_APP  # pylint: disable=W0603
 
-    if QGIS_APP is None:
-        gui_flag = True  # All test will run qgis in gui mode
-        #noinspection PyPep8Naming
-        QGIS_APP = QgsApplication(sys.argv, gui_flag)
-        # Make sure QGIS_PREFIX_PATH is set in your env if needed!
-        QGIS_APP.initQgis()
-        s = QGIS_APP.showSettings()
-        LOGGER.debug(s)
+    if QGIS_APP is not None:
+        return QGIS_APP
 
-    global PARENT  # pylint: disable=W0603
-    if PARENT is None:
-        #noinspection PyPep8Naming
-        PARENT = QtGui.QWidget()
+    try:
+        from qgis.core import QgsApplication
+    except ImportError:
+        LOGGER.exception(
+            'Could not import QGIS. Run the tests with the QGIS Python '
+            'interpreter (e.g. C:/OSGeo4W/bin/python-qgis.bat).')
+        return None
 
-    global CANVAS  # pylint: disable=W0603
-    if CANVAS is None:
-        #noinspection PyPep8Naming
-        CANVAS = QgsMapCanvas(PARENT)
-        CANVAS.resize(QtCore.QSize(400, 400))
+    # QgsApplication expects argv as a list of bytes, not str.
+    argv = [arg.encode('utf-8') for arg in sys.argv]
+    # GUI mode is off: the suite is headless and needs no widgets.
+    QGIS_APP = QgsApplication(argv, False)
+    QGIS_APP.initQgis()
+    LOGGER.debug(QGIS_APP.showSettings())
 
-    global IFACE  # pylint: disable=W0603
-    if IFACE is None:
-        # QgisInterface is a stub implementation of the QGIS plugin interface
-        #noinspection PyPep8Naming
-        IFACE = QgisInterface(CANVAS)
-
-    return QGIS_APP, CANVAS, IFACE, PARENT
+    return QGIS_APP
