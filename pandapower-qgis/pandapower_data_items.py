@@ -25,7 +25,7 @@ See docs/dataprovider_v2_plan.md sections 3.2 and 5.2.
 import os
 
 from qgis.core import Qgis, QgsDataCollectionItem, QgsDataItemProvider, \
-    QgsLayerItem, QgsMimeDataUtils
+    QgsLayerItem, QgsMessageLog, QgsMimeDataUtils
 from qgis.PyQt.QtGui import QIcon
 
 # The sip module moved into the PyQt package; a bare "import sip" fails on a
@@ -154,7 +154,10 @@ def list_tables(net):
             continue
         try:
             value = getattr(net, name)
-        except Exception:
+        except Exception as e:
+            # A property that raises on access is not a table we can list.
+            QgsMessageLog.logMessage(f"Skipping network attribute {name!r}: {e}",
+                                     "Pandapower", Qgis.MessageLevel.Info)
             continue
         if not isinstance(value, pd.DataFrame):
             continue

@@ -1,7 +1,7 @@
 from qgis.core import QgsVectorDataProvider, QgsVectorLayer, QgsFeature, QgsField, QgsFields, \
     QgsGeometry, QgsPointXY, QgsLineString, QgsWkbTypes, QgsProject, QgsCoordinateReferenceSystem, \
     QgsFeatureRequest, QgsFeatureIterator, QgsFeatureSource, QgsAbstractFeatureSource, QgsFeatureSink, \
-    QgsDataProvider, QgsProviderRegistry, QgsRectangle
+    QgsDataProvider, QgsProviderRegistry, QgsRectangle, QgsMessageLog, Qgis
 from qgis.PyQt.QtCore import QMetaType
 import json
 import pandas as pd
@@ -883,7 +883,8 @@ class PandapowerProvider(QgsVectorDataProvider):
                         feature.setAttribute(field_idx, value)
 
         except Exception as e:
-            pass
+            QgsMessageLog.logMessage(f"Could not refresh read-only fields: {e}",
+                                     "Pandapower", Qgis.MessageLevel.Warning)
 
 
     def _get_layer(self):
@@ -1922,7 +1923,11 @@ class PandapowerProvider(QgsVectorDataProvider):
                                 else:
                                     return QgsRectangle()   # Return empty rectangle on incorrect coordinate format
                         except Exception as e:
-                            continue    # Skip invalid geometry, continue with others
+                            # Skip invalid geometry, continue with others
+                            QgsMessageLog.logMessage(
+                                f"Skipping invalid {self.network_type} geometry at {idx}: {e}",
+                                "Pandapower", Qgis.MessageLevel.Info)
+                            continue
 
                 # Line geometry (line/pipe)
                 elif self.network_type in ['line', 'pipe']:
@@ -1943,7 +1948,11 @@ class PandapowerProvider(QgsVectorDataProvider):
                                             print(f"Incorrect coordinate format for {self.network_type}.")
                                             return QgsRectangle()   # Return empty rectangle on incorrect coordinate format
                         except Exception as e:
-                            continue  # Skip invalid geometry, continue with others
+                            # Skip invalid geometry, continue with others
+                            QgsMessageLog.logMessage(
+                                f"Skipping invalid {self.network_type} geometry at {idx}: {e}",
+                                "Pandapower", Qgis.MessageLevel.Info)
+                            continue
 
                 # Check if the valid range has been calculated
                 if min_x == float('inf') or max_x == float('-inf'):

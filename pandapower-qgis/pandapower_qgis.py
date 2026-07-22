@@ -55,6 +55,10 @@ import warnings
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
+# Requirement names handed to pip must be plain distribution names. Anything
+# else in requirements.txt is rejected rather than passed to a subprocess.
+DEPENDENCY_NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
+
 # The Browser panel tree (expanding a .json in the Browser) is disabled.
 #
 # Returning a Python subclass of QgsDataCollectionItem from
@@ -125,17 +129,20 @@ class ppqgis:
     def installer_func(self):
         plugin_dir = os.path.dirname(os.path.realpath(__file__))
 
+        import subprocess
+
         try:
             import pip
         except ImportError:
             QgsMessageLog.logMessage("pip missing, trying to install/update pip.",
                                      level=Qgis.MessageLevel.Info)
-            exec(open(str(pathlib.Path(plugin_dir, 'scripts', 'get_pip.py'))).read())
+            # Bootstrap pip by running the bundled get-pip script in its own
+            # interpreter process instead of exec()ing it into this one.
+            get_pip = str(pathlib.Path(plugin_dir, 'scripts', 'get_pip.py'))
+            subprocess.check_call([sys.executable, get_pip])
             import pip
-            import subprocess
             # just in case the included version is old
-            # pip.main(['install', '--upgrade', 'pip'])
-            subprocess.check_call(["pip", "install", "--upgrade", "pip"])
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
 
         sys.path.append(plugin_dir)
 
@@ -143,14 +150,17 @@ class ppqgis:
             for dep in requirements.readlines():
                 # part string at any ==, ~=, <=, >=
                 dep = re.split("[~=<>]=", dep.strip(), 1)[0]
+                if not DEPENDENCY_NAME_RE.match(dep):
+                    QgsMessageLog.logMessage("Skipping malformed requirement {!r}".format(dep),
+                                             level=Qgis.MessageLevel.Warning)
+                    continue
                 try:
                     __import__(dep)
                     QgsMessageLog.logMessage("Trying to load {}".format(dep), level=Qgis.MessageLevel.Info)
-                except ImportError as e:
-                    import subprocess
+                except ImportError:
                     QgsMessageLog.logMessage("{} not available, installing".format(dep),
                                              level=Qgis.MessageLevel.Warning)
-                    subprocess.check_call(["pip", "install", dep])
+                    subprocess.check_call([sys.executable, "-m", "pip", "install", "--", dep])
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):

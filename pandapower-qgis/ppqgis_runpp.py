@@ -173,6 +173,34 @@ def execute_power_calculation(net, function_name, kwargs_dict):
         return False, f"Power network calculation error: {str(e)}", None
 
 
+def _parse_call_kwargs(kwargs_string):
+    """
+    Parse a "key1='value1', key2=2" argument list into a dictionary.
+
+    The string is parsed as the keyword arguments of a call expression and each
+    value is read with ast.literal_eval, so only literals are accepted. No user
+    input is ever evaluated as code.
+
+    Args:
+        kwargs_string (str): Argument list without the surrounding parentheses.
+    Returns:
+        dict: Parsed parameter dictionary.
+    Raises:
+        ValueError: If the string is not a plain list of keyword arguments with
+            literal values.
+    """
+    call = ast.parse(f"f({kwargs_string})", mode='eval').body
+    if not isinstance(call, ast.Call) or call.args:
+        raise ValueError("only keyword arguments with literal values are supported")
+
+    parsed = {}
+    for keyword in call.keywords:
+        if keyword.arg is None:  # **kwargs unpacking
+            raise ValueError("** unpacking is not supported")
+        parsed[keyword.arg] = ast.literal_eval(keyword.value)
+    return parsed
+
+
 def parse_kwargs_string(kwargs_string):
     """
     Parse the parameter string entered by the user.
@@ -212,7 +240,7 @@ def parse_kwargs_string(kwargs_string):
                             kwargs_dict[key] = value.lower() == 'true'
                         else:
                             kwargs_dict[key] = value
-                    except:
+                    except (ValueError, TypeError):
                         kwargs_dict[key] = value
 
         # Method 2: Dictionary format parsing
@@ -222,9 +250,9 @@ def parse_kwargs_string(kwargs_string):
 
         # Method 3: Python expression parsing
         else:
-            # Convert "key1='value1', key2=value2" format to dictionary
-            exec_string = f"kwargs_dict = dict({kwargs_string})"
-            exec(exec_string)
+            # Convert "key1='value1', key2=value2" format to dictionary.
+            # Parsed as a literal-only AST -- no evaluation of user input.
+            kwargs_dict = _parse_call_kwargs(kwargs_string)
 
         return kwargs_dict
 

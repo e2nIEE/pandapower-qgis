@@ -1,0 +1,32 @@
+# Files excluded from the released plugin package.
+#
+# qgis-plugin-ci builds the .zip with "git archive", which honours
+# export-ignore. Everything below is build-time or developer tooling that QGIS
+# never executes at runtime; shipping the .bat/.sh helpers inside the plugin
+# made the package fail the QGIS plugin repository's suspicious-file scan.
+
+# Translation and dev-environment helper scripts.
+pandapower-qgis/scripts/ export-ignore
+
+# Sphinx help sources. Only the built HTML (help/build/html) belongs in the
+# package, and that is generated at build time rather than tracked here.
+pandapower-qgis/help/Makefile export-ignore
+pandapower-qgis/help/make.bat export-ignore
+pandapower-qgis/help/source/ export-ignore
+
+# Local pb_tool staging area, including a stale copy of the plugin zip.
+pandapower-qgis/zip_build/ export-ignore
+
+# Generated from resources.qrc by pyrcc5. qgis-plugin-ci compiles the .qrc
+# itself during packaging and aborts if a file of the built name is also
+# tracked, so the checked-in copy must stay out of the archive.
+pandapower-qgis/resources_rc.py export-ignore
+
+# Repository tooling that is not part of the plugin.
+.github/ export-ignore
+.gitattributes export-ignore
+.gitignore export-ignore
+test/ export-ignore
+docs/ export-ignore
+user_manual_image/ export-ignore
+pb_tool.cfg export-ignore

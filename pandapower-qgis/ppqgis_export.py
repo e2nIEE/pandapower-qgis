@@ -251,13 +251,19 @@ def pipes_network(parent, selected_layers) -> None:
 
                 geom = feature.geometry()
                 if geom.type() == QgsWkbTypes.GeometryType.PointGeometry:
-                    assert QgsWkbTypes.isSingleType(geom.wkbType())
+                    if not QgsWkbTypes.isSingleType(geom.wkbType()):
+                        # Multi-part points cannot be mapped onto a single bus.
+                        selectIds.append(feature.id())
+                        continue
                     geometry = geom.asPoint()
                     # QgsMessageLog.logMessage("Point: X: " + str(geometry.x()) + ", Y: " + str(geometry.y()),
                     #                         level=Qgis.MessageLevel.Info)
                     props['geodata'] = (geometry.x(), geometry.y())
                 elif geom.type() == QgsWkbTypes.GeometryType.LineGeometry:
-                    assert QgsWkbTypes.isSingleType(geom.wkbType())
+                    if not QgsWkbTypes.isSingleType(geom.wkbType()):
+                        # Multi-part lines cannot be mapped onto a single bus.
+                        selectIds.append(feature.id())
+                        continue
                     geometry = geom.asPolyline()
                     if len(geometry) > 2:
                         # bus does not support full LineStrings only start and end points
@@ -361,8 +367,8 @@ def pipes_network(parent, selected_layers) -> None:
                     selectIds.append(feature.id())
                     pipe_error_count += 1
                     continue
-                assert key in field_names
-                assert feature[key] != NULL
+                # The guard above already established that the key is present
+                # and non-NULL.
                 required[key] = feature[key]
 
             for key in optional:
@@ -375,7 +381,14 @@ def pipes_network(parent, selected_layers) -> None:
                 optional['length_km'] = geom.length()
                 uses_derived_length = True
             if geom.type() == QgsWkbTypes.GeometryType.LineGeometry:
-                assert QgsWkbTypes.isSingleType(geom.wkbType())
+                if not QgsWkbTypes.isSingleType(geom.wkbType()):
+                    # Multi-part lines cannot be mapped onto a single pipe.
+                    QgsMessageLog.logMessage(
+                        f'Skipping multi-part line geometry for {feature.id()}',
+                        level=Qgis.MessageLevel.Warning)
+                    selectIds.append(feature.id())
+                    pipe_error_count += 1
+                    continue
                 c = geom.asPolyline()  # c = list[QgsPointXY]
                 # QgsMessageLog.logMessage("Line: " + str(x), level=Qgis.MessageLevel.Info)
 
