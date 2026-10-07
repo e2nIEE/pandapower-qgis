@@ -131,3 +131,4 @@ dmypy.json
 *.zip
 pandapower-qgis/zip_build/
 zip_build/
+pandapower-qgis.code-workspace

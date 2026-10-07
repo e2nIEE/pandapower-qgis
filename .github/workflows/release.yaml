@@ -1,24 +1,54 @@
 name: Release
 
+# Publishing a GitHub release tagged vX.Y.Z builds the plugin package, attaches
+# it to that release and uploads it to plugins.qgis.org. A release marked as a
+# pre-release, or a tag such as v1.2.0-beta.1, is uploaded as experimental.
+
 on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
 jobs:
+  tests:
+    name: Tests
+    uses: ./.github/workflows/test.yaml
+
   release:
+    name: Publish
+    needs: tests
     runs-on: ubuntu-latest
+    permissions:
+      # Attach the package to the GitHub release.
+      contents: write
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Check the plugins.qgis.org token is configured
+        env:
+          QGIS_PLUGIN_TOKEN: ${{ secrets.QGIS_PLUGIN_TOKEN }}
+        run: |
+          if [ -z "$QGIS_PLUGIN_TOKEN" ]; then
+            echo "::error::Repository secret QGIS_PLUGIN_TOKEN is not set."
+            echo "Create a token at https://plugins.qgis.org/plugins/pandapower-qgis/tokens/"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v7
         with:
           # qgis-plugin-ci packages from the git tree and reads the changelog
           # from history, so a shallow clone silently produces a broken package.
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       # Needed if the plugin starts using Transifex, to have the lrelease command
       # - name: Install Qt lrelease
@@ -27,76 +57,65 @@ jobs:
       #     sudo apt-get install qt5-make qttools5-dev-tools
 
       - name: Install qgis-plugin-ci
-        run: pip3 install qgis-plugin-ci
+        run: pip3 install qgis-plugin-ci==2.10.0
 
       - name: Determine the version being released
         id: version
+        env:
+          TAG: ${{ github.event.release.tag_name }}
         run: |
           # The release tag, with any leading "v" removed. qgis-plugin-ci writes
           # this string into metadata.txt verbatim, so releasing tag "v0.0.4"
           # unstripped would ship "version=v0.0.4".
-          tag="${GITHUB_REF#refs/tags/}"
-          version="${tag#v}"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          version="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Releasing tag $tag as version $version"
+          echo "Releasing tag $TAG as version $version"
 
       - name: Check the tag matches metadata.txt
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           metadata=$(grep '^version=' pandapower-qgis/metadata.txt | cut -d= -f2)
-          if [ "$metadata" != "${{ steps.version.outputs.version }}" ]; then
-            echo "::error::Tag ${{ steps.version.outputs.tag }} does not match metadata.txt (version=$metadata)."
+          if [ "$metadata" != "$VERSION" ]; then
+            echo "::error::Tag $TAG does not match metadata.txt (version=$metadata)."
             echo "Update pandapower-qgis/metadata.txt before tagging."
             exit 1
           fi
           echo "metadata.txt and the tag agree on $metadata."
 
       - name: Check the changelog has an entry for this version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          entry=$(qgis-plugin-ci changelog "${{ steps.version.outputs.version }}")
+          entry=$(qgis-plugin-ci changelog "$VERSION")
           if [ -z "$entry" ]; then
-            echo "::error::CHANGELOG.md has no entry for ${{ steps.version.outputs.version }}."
-            echo "Expected a heading of the form: ## ${{ steps.version.outputs.version }} - YYYY-MM-DD"
+            echo "::error::CHANGELOG.md has no entry for $VERSION."
+            echo "Expected a heading of the form: ## $VERSION - YYYY-MM-DD"
             exit 1
           fi
           echo "$entry"
 
-      - name: Check the package contains every plugin module
+      - name: Check the package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          qgis-plugin-ci package "${{ steps.version.outputs.version }}"
-          python3 - <<'PY'
-          import glob
-          import os
-          import sys
-          import zipfile
-
-          archive = glob.glob('*.zip')[0]
-          shipped = {
-              os.path.basename(name)
-              for name in zipfile.ZipFile(archive).namelist()
-              if name.endswith('.py')
-          }
-          on_disk = {
-              os.path.basename(path)
-              for path in glob.glob('pandapower-qgis/*.py')
-          }
-
-          missing = sorted(on_disk - shipped)
-          if missing:
-              print('::error::Refusing to release: these modules are missing '
-                    'from the package (most likely never committed to git):')
-              for name in missing:
-                  print('  -', name)
-              sys.exit(1)
-
-          print('All {} plugin modules are present.'.format(len(on_disk)))
-          PY
+          qgis-plugin-ci package "$VERSION"
+          python3 .github/scripts/check_package.py pandapower-qgis
           rm -f ./*.zip
 
-      - name: Deploy plugin
+      - name: Publish to GitHub and plugins.qgis.org
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          QGIS_PLUGIN_TOKEN: ${{ secrets.QGIS_PLUGIN_TOKEN }}
+        # --release-tag is required because the tag (v0.0.5) differs from the
+        # version (0.0.5); without it qgis-plugin-ci looks up a GitHub release
+        # named "0.0.5" and fails.
         run: >-
-          qgis-plugin-ci
-          release ${{ steps.version.outputs.version }}
-          --github-token ${{ secrets.GITHUB_TOKEN }}
-          --osgeo-username ${{ secrets.OSGEO_USER }}
-          --osgeo-password ${{ secrets.OSGEO_PASSWORD }}
+          qgis-plugin-ci release "$VERSION"
+          --release-tag "$TAG"
+          --github-token "$GITHUB_TOKEN"
+          --qgis-token "$QGIS_PLUGIN_TOKEN"

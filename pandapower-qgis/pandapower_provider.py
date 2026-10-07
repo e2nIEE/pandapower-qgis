@@ -1,7 +1,7 @@
 from qgis.core import QgsVectorDataProvider, QgsVectorLayer, QgsFeature, QgsField, QgsFields, \
     QgsGeometry, QgsPointXY, QgsLineString, QgsWkbTypes, QgsProject, QgsCoordinateReferenceSystem, \
     QgsFeatureRequest, QgsFeatureIterator, QgsFeatureSource, QgsAbstractFeatureSource, QgsFeatureSink, \
-    QgsDataProvider, QgsProviderRegistry, QgsRectangle
+    QgsDataProvider, QgsProviderRegistry, QgsRectangle, QgsMessageLog, Qgis
 from qgis.PyQt.QtCore import QMetaType
 import json
 import pandas as pd
@@ -21,30 +21,30 @@ def convert_dtype_to_qmetatype(dtype):
     Args:
         dtype: Pandas data type to convert
     Returns:
-        QMetaType: Corresponding Qt data type, QMetaType.Invalid if not recognized
+        QMetaType: Corresponding Qt data type, QMetaType.Type.UnknownType if not recognized
     """
     if pd.api.types.is_integer_dtype(dtype):
-        return QMetaType.Int
+        return QMetaType.Type.Int
     elif pd.api.types.is_unsigned_integer_dtype(dtype):
-        return QMetaType.UInt
+        return QMetaType.Type.UInt
     elif pd.api.types.is_float_dtype(dtype):
-        return QMetaType.Double
+        return QMetaType.Type.Double
     elif pd.api.types.is_bool_dtype(dtype):
-        return QMetaType.Bool
+        return QMetaType.Type.Bool
     elif pd.api.types.is_string_dtype(dtype):
-        return QMetaType.QString
+        return QMetaType.Type.QString
     elif pd.api.types.is_object_dtype(dtype):   # object is string?
-        return QMetaType.QString
+        return QMetaType.Type.QString
     elif pd.api.types.is_datetime64_any_dtype(dtype):
-        return QMetaType.QDateTime
+        return QMetaType.Type.QDateTime
     else:
         print(f"Unexpected dtype detected: {dtype}. Add it or check if it is not available.")
-        return QMetaType.Invalid
+        return QMetaType.Type.UnknownType
 
 
 class PandapowerProvider(QgsVectorDataProvider):
     @classmethod
-    def createProvider(cls, uri, providerOptions = QgsDataProvider.ProviderOptions(), flags = QgsDataProvider.ReadFlags()):
+    def createProvider(cls, uri, providerOptions = QgsDataProvider.ProviderOptions(), flags = Qgis.DataProviderReadFlags()):
         """
         Factory methode that create provider instance.
         Args:
@@ -57,7 +57,7 @@ class PandapowerProvider(QgsVectorDataProvider):
         return PandapowerProvider(uri, providerOptions, flags)
 
 
-    def __init__(self, uri = "", providerOptions = QgsDataProvider.ProviderOptions(), flags = QgsDataProvider.ReadFlags()):
+    def __init__(self, uri = "", providerOptions = QgsDataProvider.ProviderOptions(), flags = Qgis.DataProviderReadFlags()):
         """
         Initialize the pandapower data provider from the shared NetworkSession.
         Sets up network type, coordinate system, and joins the session so that every
@@ -883,7 +883,8 @@ class PandapowerProvider(QgsVectorDataProvider):
                         feature.setAttribute(field_idx, value)
 
         except Exception as e:
-            pass
+            QgsMessageLog.logMessage(f"Could not refresh read-only fields: {e}",
+                                     "Pandapower", Qgis.MessageLevel.Warning)
 
 
     def _get_layer(self):
@@ -981,10 +982,10 @@ class PandapowerProvider(QgsVectorDataProvider):
                 f"{self.session.path}\n\n"
                 f"has changed since it was opened. Overwrite it with the "
                 f"in-memory network?",
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
-            return answer == QMessageBox.Yes
+            return answer == QMessageBox.StandardButton.Yes
         except Exception:
             # Without a GUI, refuse rather than clobber the file.
             return False
@@ -1016,7 +1017,7 @@ class PandapowerProvider(QgsVectorDataProvider):
             field_names = [f.name() for f in self.fields_list]
 
             # Set Form Layout
-            config.setLayout(QgsEditFormConfig.TabLayout)
+            config.setLayout(Qgis.AttributeFormLayout.DragAndDrop)
             root = config.invisibleRootContainer()
             root.clear()  # Clear existing fields
             # Get result DataFrame
@@ -1094,10 +1095,10 @@ class PandapowerProvider(QgsVectorDataProvider):
                     # Set NotNull constraint for required fields
                     if field_name in required_fields:
                         field_constraints = layer.fields()[field_idx].constraints()
-                        field_constraints.setConstraint(QgsFieldConstraints.ConstraintNotNull)
+                        field_constraints.setConstraint(QgsFieldConstraints.Constraint.ConstraintNotNull)
                         field_constraints.setConstraintStrength(
-                            QgsFieldConstraints.ConstraintNotNull,
-                            QgsFieldConstraints.ConstraintStrengthHard
+                            QgsFieldConstraints.Constraint.ConstraintNotNull,
+                            QgsFieldConstraints.ConstraintStrength.ConstraintStrengthHard
                         )
 
                     # Expression constraints for physical parameters
@@ -1123,7 +1124,7 @@ class PandapowerProvider(QgsVectorDataProvider):
             # 3. Set Table View as default (not Form View)
             from qgis.core import QgsAttributeTableConfig
             table_config = layer.attributeTableConfig()
-            table_config.setActionWidgetStyle(QgsAttributeTableConfig.ButtonList)
+            table_config.setActionWidgetStyle(QgsAttributeTableConfig.ActionWidgetStyle.ButtonList)
             table_config.update(layer.fields())
             layer.setAttributeTableConfig(table_config)
 
@@ -1730,7 +1731,7 @@ class PandapowerProvider(QgsVectorDataProvider):
 
             # Create message box
             msg = QMessageBox()
-            msg.setIcon(QMessageBox.Warning)
+            msg.setIcon(QMessageBox.Icon.Warning)
             msg.setWindowTitle("Confirm Cascade Delete")
 
             # Main text: What buses are being deleted
@@ -1784,23 +1785,23 @@ class PandapowerProvider(QgsVectorDataProvider):
             msg.setInformativeText(detail_text)
 
             # Configure buttons
-            msg.setStandardButtons(QMessageBox.Cancel | QMessageBox.Yes)
-            msg.setDefaultButton(QMessageBox.Cancel)  # Default to Cancel for safety
+            msg.setStandardButtons(QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.Yes)
+            msg.setDefaultButton(QMessageBox.StandardButton.Cancel)  # Default to Cancel for safety
 
-            yes_button = msg.button(QMessageBox.Yes)
+            yes_button = msg.button(QMessageBox.StandardButton.Yes)
             if connected_info['total_count'] == 0:
                 yes_button.setText("Delete Bus")
             else:
                 total_elements = len(bus_ids) + connected_info['total_count']
                 yes_button.setText(f"Delete All ({total_elements})")
 
-            cancel_button = msg.button(QMessageBox.Cancel)
+            cancel_button = msg.button(QMessageBox.StandardButton.Cancel)
             cancel_button.setText("Cancel")
 
             # Show dialog and get result
-            result = msg.exec_()
+            result = msg.exec()
 
-            if result == QMessageBox.Yes:
+            if result == QMessageBox.StandardButton.Yes:
                 return True
             else:
                 return False
@@ -1810,7 +1811,7 @@ class PandapowerProvider(QgsVectorDataProvider):
 
     # =========================================================================
 
-    def capabilities(self) -> QgsVectorDataProvider.Capabilities:
+    def capabilities(self) -> Qgis.VectorProviderCapabilities:
         """
         Return the capabilities supported by this data provider.
         Capabilities depend on the table: attribute-only tables have no geometry
@@ -1818,24 +1819,24 @@ class PandapowerProvider(QgsVectorDataProvider):
         implemented for bus and line. Advertising more than is implemented would
         let QGIS offer edits that are then rejected.
         Returns:
-            QgsVectorDataProvider.Capabilities
+            Qgis.VectorProviderCapabilities
         """
         caps = (
-            QgsVectorDataProvider.SelectAtId |
-            QgsVectorDataProvider.ChangeAttributeValues
+            Qgis.VectorProviderCapability.SelectAtId |
+            Qgis.VectorProviderCapability.ChangeAttributeValues
         )
 
         if self.has_geometry():
             caps |= (
-                QgsVectorDataProvider.CreateSpatialIndex |
-                QgsVectorDataProvider.ChangeGeometries
+                Qgis.VectorProviderCapability.CreateSpatialIndex |
+                Qgis.VectorProviderCapability.ChangeGeometries
             )
 
         # addFeatures()/deleteFeatures() are implemented for bus and line only.
         if self.network_type in ('bus', 'line'):
             caps |= (
-                QgsVectorDataProvider.AddFeatures |
-                QgsVectorDataProvider.DeleteFeatures
+                Qgis.VectorProviderCapability.AddFeatures |
+                Qgis.VectorProviderCapability.DeleteFeatures
             )
 
         return caps
@@ -1922,7 +1923,11 @@ class PandapowerProvider(QgsVectorDataProvider):
                                 else:
                                     return QgsRectangle()   # Return empty rectangle on incorrect coordinate format
                         except Exception as e:
-                            continue    # Skip invalid geometry, continue with others
+                            # Skip invalid geometry, continue with others
+                            QgsMessageLog.logMessage(
+                                f"Skipping invalid {self.network_type} geometry at {idx}: {e}",
+                                "Pandapower", Qgis.MessageLevel.Info)
+                            continue
 
                 # Line geometry (line/pipe)
                 elif self.network_type in ['line', 'pipe']:
@@ -1943,7 +1948,11 @@ class PandapowerProvider(QgsVectorDataProvider):
                                             print(f"Incorrect coordinate format for {self.network_type}.")
                                             return QgsRectangle()   # Return empty rectangle on incorrect coordinate format
                         except Exception as e:
-                            continue  # Skip invalid geometry, continue with others
+                            # Skip invalid geometry, continue with others
+                            QgsMessageLog.logMessage(
+                                f"Skipping invalid {self.network_type} geometry at {idx}: {e}",
+                                "Pandapower", Qgis.MessageLevel.Info)
+                            continue
 
                 # Check if the valid range has been calculated
                 if min_x == float('inf') or max_x == float('-inf'):
@@ -2006,12 +2015,12 @@ class PandapowerProvider(QgsVectorDataProvider):
                 NoGeometry for attribute-only tables such as trafo or load
         """
         if self.network_type in ('bus', 'junction'):
-            return QgsWkbTypes.Point
+            return Qgis.WkbType.Point
         elif self.network_type in ('line', 'pipe'):
-            return QgsWkbTypes.LineString
+            return Qgis.WkbType.LineString
         # Attribute-only table: opens as a plain table, like a non-spatial
         # table in a database (plan section 3.6).
-        return QgsWkbTypes.NoGeometry
+        return Qgis.WkbType.NoGeometry
 
 
     def has_geometry(self):

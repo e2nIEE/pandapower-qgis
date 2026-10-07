@@ -76,7 +76,7 @@ class ProviderMetadataTest(unittest.TestCase):
         """FileBasedUris is still declared, in the method it belongs to."""
         self.assertTrue(
             self.metadata.providerCapabilities()
-            & QgsProviderMetadata.FileBasedUris)
+            & QgsProviderMetadata.ProviderCapability.FileBasedUris)
 
     def test_no_vector_file_filter_is_contributed(self):
         """The provider does not appear in "Add Vector Layer -> File".
@@ -110,7 +110,7 @@ class SourceSelectProviderTest(unittest.TestCase):
         ordering = self.provider.ordering()
 
         self.assertGreater(ordering,
-                           QgsSourceSelectProvider.OrderDatabaseProvider)
+                           QgsSourceSelectProvider.Ordering.OrderDatabaseProvider)
         self.assertLess(ordering, QgsSourceSelectProvider.OrderOtherProvider)
 
     def test_entry_has_an_icon(self):
@@ -160,7 +160,7 @@ class SourceSelectWidgetTest(unittest.TestCase):
         for row in rows:
             model.select(
                 self.widget.table.model().index(row, 0),
-                QItemSelectionModel.Select | QItemSelectionModel.Rows)
+                QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
 
     def test_lists_the_tables_of_a_network(self):
         """Loading a network fills the listing."""

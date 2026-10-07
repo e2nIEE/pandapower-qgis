@@ -1,4 +1,4 @@
-from qgis.core import QgsMapLayer, QgsVectorLayer, QgsProject, Qgis
+from qgis.core import QgsMapLayer, QgsVectorLayer, QgsProject, QgsMessageLog, Qgis
 from qgis.utils import iface
 
 
@@ -230,8 +230,10 @@ class MapTipUtils:
         # Or use an action trigger (simulates clicking a UI button)
         try:
             iface.actionMapTips().trigger()
-        except:
-            pass  # Ignore if the action is missing or inaccessible
+        except (AttributeError, RuntimeError) as e:
+            # Ignore if the action is missing or inaccessible
+            QgsMessageLog.logMessage(f"Could not trigger the map tips action: {e}",
+                                     "Pandapower", Qgis.MessageLevel.Info)
 
 
     @staticmethod
@@ -246,5 +248,7 @@ class MapTipUtils:
         try:
             if iface.actionMapTips().isChecked():
                 iface.actionMapTips().trigger()
-        except:
-            pass  # Ignore if the action is missing or inaccessible
+        except (AttributeError, RuntimeError) as e:
+            # Ignore if the action is missing or inaccessible
+            QgsMessageLog.logMessage(f"Could not trigger the map tips action: {e}",
+                                     "Pandapower", Qgis.MessageLevel.Info)

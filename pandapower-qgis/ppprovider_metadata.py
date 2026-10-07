@@ -72,7 +72,7 @@ class PandapowerProviderMetadata(QgsProviderMetadata):
         Returns:
             QgsProviderMetadata.ProviderCapabilities
         """
-        return QgsProviderMetadata.FileBasedUris
+        return QgsProviderMetadata.ProviderCapability.FileBasedUris
 
 
     def filters(self, filterType):

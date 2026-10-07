@@ -22,7 +22,7 @@ import sys
 import tempfile
 import unittest
 
-from qgis.core import QgsProviderRegistry, QgsWkbTypes
+from qgis.core import Qgis, QgsProviderRegistry
 
 from .utilities import get_qgis_app
 
@@ -168,7 +168,7 @@ class ResultColumnMergeTest(unittest.TestCase):
         layer = self.factory.create_layer(self.path, 'res_line', epsg=4326)
 
         self.assertTrue(layer.isValid())
-        self.assertEqual(layer.wkbType(), QgsWkbTypes.NoGeometry)
+        self.assertEqual(layer.wkbType(), Qgis.WkbType.NoGeometry)
         self.assertIn(LINE_STYLING_COLUMN, self._field_names(layer))
 
     def test_both_views_read_one_shared_network(self):

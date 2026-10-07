@@ -201,10 +201,10 @@ class PandapowerDataItemGuiProvider(QgsDataItemGuiProvider):
             'No results yet',
             'The table "{}" has no results.\n\n'
             'Run a power flow now?'.format(item.table),
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
         )
-        if answer == QMessageBox.Yes:
+        if answer == QMessageBox.StandardButton.Yes:
             self._run_power_flow(item.file_path)
 
     def _run_power_flow(self, path):
@@ -249,10 +249,10 @@ class PandapowerDataItemGuiProvider(QgsDataItemGuiProvider):
                 'File changed on disk',
                 'The file has changed since it was opened.\n\n'
                 'Overwrite it with the in-memory network?',
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
-            if answer != QMessageBox.Yes:
+            if answer != QMessageBox.StandardButton.Yes:
                 return
 
         try:
@@ -277,10 +277,10 @@ class PandapowerDataItemGuiProvider(QgsDataItemGuiProvider):
                 'Discard changes?',
                 'This network has unsaved changes.\n\n'
                 'Reload from disk and lose them?',
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.No,
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
             )
-            if answer != QMessageBox.Yes:
+            if answer != QMessageBox.StandardButton.Yes:
                 return
 
         try:
