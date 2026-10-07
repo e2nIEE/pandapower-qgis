@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+## 0.0.5 - 2026-10-07
+
+First release outside the experimental channel.
+
+**Security**
+
+* The extra parameters field of *Run power flow* no longer runs the text as Python.
+  Only literal values (`algorithm='nr', max_iteration=10`) are accepted.
+* The plugin no longer installs packages itself with pip. Dependencies are installed
+  by the qpip plugin from `requirements.txt`.
+
+**Fixes**
+
+* Export skips multi-part geometries and selects them, instead of stopping with an
+  assertion error.
+* Errors that were silently ignored are now written to the *Pandapower* tab of the
+  message log.
+* The plugin package no longer contains developer scripts (`.bat`, `.sh`).
+
+**Requires** pandapower 3.5.6 or newer. numpy and scipy are no longer pinned.
+
 ## 0.0.4 - 2026-07-21
 
 pandapower networks are a data source, not an import.

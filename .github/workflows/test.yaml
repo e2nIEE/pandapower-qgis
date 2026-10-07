@@ -6,8 +6,15 @@ on:
       - main
       - develop
       - 'feature/**'
+      - 'release/**'
+      - 'hotfix/**'
   pull_request:
   workflow_dispatch:
+  # The release workflow runs the same checks before it publishes anything.
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -15,12 +22,13 @@ jobs:
     runs-on: ubuntu-latest
 
     # The QGIS Python bindings cannot be pip-installed, so the tests run inside
-    # the official QGIS image rather than on a bare runner.
+    # the official QGIS image rather than on a bare runner. The image is pinned
+    # to qgisMinimumVersion, so the oldest supported QGIS is the one tested.
     container:
-      image: qgis/qgis:ltr-questing
+      image: qgis/qgis:3.44-noble
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Python dependencies
         run: |
@@ -45,17 +53,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # qgis-plugin-ci reads the changelog from the git history.
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version: '3.12'
 
       - name: Install qgis-plugin-ci
-        run: pip3 install qgis-plugin-ci
+        run: pip3 install qgis-plugin-ci==2.10.0
 
       - name: Read the plugin version
         id: version
@@ -65,55 +73,27 @@ jobs:
           echo "Plugin version: $version"
 
       - name: Check the changelog has an entry for this version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          entry=$(qgis-plugin-ci changelog "${{ steps.version.outputs.version }}")
+          entry=$(qgis-plugin-ci changelog "$VERSION")
           if [ -z "$entry" ]; then
-            echo "::error::CHANGELOG.md has no entry for ${{ steps.version.outputs.version }}."
-            echo "Expected a heading of the form: ## ${{ steps.version.outputs.version }} - YYYY-MM-DD"
+            echo "::error::CHANGELOG.md has no entry for $VERSION."
+            echo "Expected a heading of the form: ## $VERSION - YYYY-MM-DD"
             exit 1
           fi
           echo "$entry"
 
       - name: Build the plugin package
-        run: qgis-plugin-ci package "${{ steps.version.outputs.version }}"
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: qgis-plugin-ci package "$VERSION"
 
-      - name: Check the package contains every plugin module
-        run: |
-          python3 - <<'PY'
-          import glob
-          import os
-          import sys
-          import zipfile
-
-          archive = glob.glob('*.zip')[0]
-          shipped = {
-              os.path.basename(name)
-              for name in zipfile.ZipFile(archive).namelist()
-              if name.endswith('.py')
-          }
-
-          # qgis-plugin-ci packages from git, so a module that was never
-          # committed is silently left out and the plugin fails to load for
-          # users while working perfectly in the developer's checkout.
-          on_disk = {
-              os.path.basename(path)
-              for path in glob.glob('pandapower-qgis/*.py')
-          }
-
-          missing = sorted(on_disk - shipped)
-          if missing:
-              print('::error::These modules exist but are not in the package.')
-              print('Most likely they were never committed to git:')
-              for name in missing:
-                  print('  -', name)
-              sys.exit(1)
-
-          print('All {} plugin modules are present in {}.'.format(
-              len(on_disk), archive))
-          PY
+      - name: Check the package
+        run: python3 .github/scripts/check_package.py pandapower-qgis
 
       - name: Upload the package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: plugin-package
           path: '*.zip'

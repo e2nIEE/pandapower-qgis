@@ -2,7 +2,10 @@ plugin_path: pandapower-qgis
 github_organization_slug: e2nIEE
 project_slug: pandapower_qgis
 
-# Install the plugin as "pandapower_qgis" rather than as the source directory
-# name "pandapower-qgis". A dash is not valid in a Python module name, so QGIS
-# cannot import a plugin directory containing one.
-use_project_slug_as_plugin_directory: true
+# Keep the plugin directory inside the zip as "pandapower-qgis". That is the
+# package name the plugin is registered under on plugins.qgis.org (plugin 3020),
+# and the repository identifies plugins by it: a package unpacking to any other
+# directory is treated as a different plugin, so the upload is rejected and
+# existing installs never see the update. QGIS loads plugins with
+# __import__(name), which accepts the dash.
+use_project_slug_as_plugin_directory: false
