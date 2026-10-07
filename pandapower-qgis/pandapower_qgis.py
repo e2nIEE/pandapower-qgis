@@ -33,7 +33,7 @@ import numpy
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog, QListWidgetItem, QTreeWidgetItem
-from qgis.core import QgsProject, QgsWkbTypes, QgsMessageLog, Qgis, NULL
+from qgis.core import QgsProject, QgsWkbTypes, Qgis, NULL
 
 # Initialize Qt resources from file resources.py
 from .resources import *
@@ -42,10 +42,6 @@ from .pandapower_export_dialog import ppExportDialog
 from .pandapower_runpp_dialog import ppRunDialog
 from .pandapower_export_summary_dialog import ppExportSummaryDialog
 
-# install requirements
-import re
-import sys
-import pathlib
 import os.path
 
 from typing import List
@@ -54,10 +50,6 @@ from typing import List
 import warnings
 
 warnings.simplefilter(action='ignore', category=FutureWarning)
-
-# Requirement names handed to pip must be plain distribution names. Anything
-# else in requirements.txt is rejected rather than passed to a subprocess.
-DEPENDENCY_NAME_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]*$')
 
 # The Browser panel tree (expanding a .json in the Browser) is disabled.
 #
@@ -125,42 +117,6 @@ class ppqgis:
         self.data_item_provider = None
         self.data_item_gui_provider = None
         self.source_select_provider = None
-
-    def installer_func(self):
-        plugin_dir = os.path.dirname(os.path.realpath(__file__))
-
-        import subprocess
-
-        try:
-            import pip
-        except ImportError:
-            QgsMessageLog.logMessage("pip missing, trying to install/update pip.",
-                                     level=Qgis.MessageLevel.Info)
-            # Bootstrap pip by running the bundled get-pip script in its own
-            # interpreter process instead of exec()ing it into this one.
-            get_pip = str(pathlib.Path(plugin_dir, 'scripts', 'get_pip.py'))
-            subprocess.check_call([sys.executable, get_pip])
-            import pip
-            # just in case the included version is old
-            subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
-
-        sys.path.append(plugin_dir)
-
-        with open(os.path.join(plugin_dir, 'requirements.txt'), "r") as requirements:
-            for dep in requirements.readlines():
-                # part string at any ==, ~=, <=, >=
-                dep = re.split("[~=<>]=", dep.strip(), 1)[0]
-                if not DEPENDENCY_NAME_RE.match(dep):
-                    QgsMessageLog.logMessage("Skipping malformed requirement {!r}".format(dep),
-                                             level=Qgis.MessageLevel.Warning)
-                    continue
-                try:
-                    __import__(dep)
-                    QgsMessageLog.logMessage("Trying to load {}".format(dep), level=Qgis.MessageLevel.Info)
-                except ImportError:
-                    QgsMessageLog.logMessage("{} not available, installing".format(dep),
-                                             level=Qgis.MessageLevel.Warning)
-                    subprocess.check_call([sys.executable, "-m", "pip", "install", "--", dep])
 
     # noinspection PyMethodMayBeStatic
     def tr(self, message):
@@ -469,8 +425,6 @@ class ppqgis:
             for ind in range(layer_item.childCount()):
                 if layer_item.child(ind).checkState(0) == QtCore.Qt.CheckState.Checked:
                     selected_layers.append(layer_lookup[ind])
-
-            # self.installer_func()
 
             if self.dlg_export.power:
                 power_network(self, selected_layers)
