@@ -6,6 +6,12 @@
 
 First release outside the experimental channel.
 
+**QGIS 4**
+
+* The plugin runs on QGIS 4 (Qt6) as well as QGIS 3.44 (Qt5).
+* Ubuntu 24.04 (noble) with QGIS from apt is not supported: its system numpy 1.x
+  conflicts with the numpy 2 that pandapower's dependencies require.
+
 **Security**
 
 * The extra parameters field of *Run power flow* no longer runs the text as Python.

@@ -144,7 +144,7 @@ def _count_at_level(net, table, level):
 class PandapowerSourceSelectWidget(QgsAbstractDataSourceWidget):
     """Lets the user pick a network file and add tables from it as layers."""
 
-    def __init__(self, parent=None, fl=Qt.Widget, widgetMode=None):
+    def __init__(self, parent=None, fl=Qt.WindowType.Widget, widgetMode=None):
         """Initialise the widget.
 
         Args:
@@ -187,12 +187,12 @@ class PandapowerSourceSelectWidget(QgsAbstractDataSourceWidget):
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(
             ['Table', 'Geometry', 'Level', 'Features'])
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(
-            COL_TABLE, QHeaderView.Stretch)
+            COL_TABLE, QHeaderView.ResizeMode.Stretch)
         self.table.doubleClicked.connect(self._on_row_double_clicked)
         layout.addWidget(self.table, 1)
 
@@ -331,14 +331,14 @@ class PandapowerSourceSelectWidget(QgsAbstractDataSourceWidget):
             level = QTableWidgetItem(
                 '' if row['level'] is None else str(row['level']))
             features = QTableWidgetItem(str(row['features']))
-            features.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            features.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
             # An empty result table holds nothing to show, so the row is greyed
             # out and made unselectable. "Select all" therefore skips it, which
             # is intended: adding it would produce an empty layer.
             if row['table'].startswith('res_') and row['features'] == 0:
                 for item in (name, geometry, level, features):
-                    item.setFlags(Qt.NoItemFlags)
+                    item.setFlags(Qt.ItemFlag.NoItemFlags)
                     item.setToolTip('No results yet - run a power flow first')
                 name.setText('{}  (no results)'.format(row['table']))
 
@@ -349,7 +349,7 @@ class PandapowerSourceSelectWidget(QgsAbstractDataSourceWidget):
 
         self.table.resizeColumnsToContents()
         self.table.horizontalHeader().setSectionResizeMode(
-            COL_TABLE, QHeaderView.Stretch)
+            COL_TABLE, QHeaderView.ResizeMode.Stretch)
 
     def _on_row_double_clicked(self, index):
         """Add the double-clicked table.
@@ -384,7 +384,7 @@ class PandapowerSourceSelectWidget(QgsAbstractDataSourceWidget):
                 continue
             model.select(
                 self.table.model().index(index, 0),
-                QItemSelectionModel.Select | QItemSelectionModel.Rows)
+                QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
 
     def selected_rows(self):
         """Return the descriptions of the currently selected rows.
@@ -569,9 +569,9 @@ class PandapowerSourceSelectProvider(QgsSourceSelectProvider):
         Returns:
             int: Sort key.
         """
-        return QgsSourceSelectProvider.OrderDatabaseProvider + 100
+        return QgsSourceSelectProvider.Ordering.OrderDatabaseProvider + 100
 
-    def createDataSourceWidget(self, parent=None, fl=Qt.Widget,
+    def createDataSourceWidget(self, parent=None, fl=Qt.WindowType.Widget,
                                widgetMode=QgsProviderRegistry.WidgetMode.Embedded):
         """Create the page widget.
 

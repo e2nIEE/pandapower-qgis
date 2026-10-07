@@ -30,13 +30,12 @@ import numpy
 """
 # TODO: Write a try for geopandas import and error out without crashing
 
+from qgis.PyQt import QtCore
 from qgis.PyQt.QtCore import QSettings, QTranslator, QCoreApplication
 from qgis.PyQt.QtGui import QIcon
 from qgis.PyQt.QtWidgets import QAction, QFileDialog, QListWidgetItem, QTreeWidgetItem
 from qgis.core import QgsProject, QgsWkbTypes, Qgis, NULL
 
-# Initialize Qt resources from file resources.py
-from .resources import *
 # Import the code for the dialog
 from .pandapower_export_dialog import ppExportDialog
 from .pandapower_runpp_dialog import ppRunDialog
@@ -146,8 +145,7 @@ class ppqgis:
             parent=None):
         """Add a toolbar icon to the toolbar.
 
-        :param icon_path: Path to the icon for this action. Can be a resource
-            path (e.g. ':/plugins/foo/bar.png') or a normal file system path.
+        :param icon_path: File system path to the icon for this action.
         :type icon_path: str
 
         :param text: Text that should be shown in menu items for this action.
@@ -210,9 +208,11 @@ class ppqgis:
     def initGui(self):
         """Create the menu entries and toolbar icons inside the QGIS GUI."""
 
-        icon_path = ':/plugins/pandapower_qgis/pp.svg'
-        export_icon_path = ':/plugins/pandapower_qgis/pp_export.svg'
-        runpp_icon_path = ':/plugins/pandapower_qgis/pp.svg'    # tmp
+        # Icons are loaded from the plugin directory rather than a compiled Qt
+        # resource file: PyQt6 has no resource compiler, so a .qrc cannot be
+        # built for QGIS 4.
+        export_icon_path = os.path.join(self.plugin_dir, 'pp_export.svg')
+        runpp_icon_path = os.path.join(self.plugin_dir, 'pp.svg')    # tmp
 
         self.add_action(
             icon_path=export_icon_path,
@@ -386,7 +386,7 @@ class ppqgis:
         # Generate Tristate Group item for layers
         layer_item = QTreeWidgetItem(tree_widget)
         layer_item.setText(0, self.tr("layers"))
-        layer_item.setFlags(layer_item.flags() | QtCore.Qt.ItemIsTristate | QtCore.Qt.ItemIsUserCheckable)
+        layer_item.setFlags(layer_item.flags() | QtCore.Qt.ItemFlag.ItemIsAutoTristate | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
         layer_item.setExpanded(True)
         tree_widget.addTopLevelItem(layer_item)
 
@@ -397,7 +397,7 @@ class ppqgis:
             # add layer item with checkbox to treeWidget
             tree_item = QTreeWidgetItem(layer_item)
             tree_item.setText(0, name)
-            tree_item.setFlags(tree_item.flags() | QtCore.Qt.ItemIsUserCheckable)
+            tree_item.setFlags(tree_item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
             tree_item.setCheckState(0, QtCore.Qt.CheckState.Checked)
             layer_item.addChild(tree_item)
             item_index = layer_item.indexOfChild(tree_item)
@@ -417,7 +417,7 @@ class ppqgis:
         # show the dialog
         self.dlg_export.show()
         # Run the dialog event loop
-        result = self.dlg_export.exec_()
+        result = self.dlg_export.exec()
         # See if OK was pressed
         if result:
             # get selected layers
@@ -515,7 +515,7 @@ class ppqgis:
             self.iface.messageBar().pushMessage(
                 "No pandapower network",
                 self._describe_missing_session(),
-                level=Qgis.Warning,
+                level=Qgis.MessageLevel.Warning,
                 duration=8
             )
             return
@@ -525,4 +525,4 @@ class ppqgis:
 
         # Run dialog
         self.dlg_runpp.show()
-        result = self.dlg_runpp.exec_()
+        result = self.dlg_runpp.exec()

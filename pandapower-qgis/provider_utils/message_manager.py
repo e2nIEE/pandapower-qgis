@@ -43,7 +43,7 @@ class MessageManager:
         iface.messageBar().pushMessage(
             title,
             message,
-            level=Qgis.Critical,
+            level=Qgis.MessageLevel.Critical,
             duration=duration
         )
 
@@ -69,7 +69,7 @@ class MessageManager:
         iface.messageBar().pushMessage(
             title,
             message,
-            level=Qgis.Warning,
+            level=Qgis.MessageLevel.Warning,
             duration=duration
         )
 
@@ -95,7 +95,7 @@ class MessageManager:
         iface.messageBar().pushMessage(
             title,
             message,
-            level=Qgis.Success,
+            level=Qgis.MessageLevel.Success,
             duration=duration
         )
 
@@ -121,6 +121,6 @@ class MessageManager:
         iface.messageBar().pushMessage(
             title,
             message,
-            level=Qgis.Info,
+            level=Qgis.MessageLevel.Info,
             duration=duration
         )

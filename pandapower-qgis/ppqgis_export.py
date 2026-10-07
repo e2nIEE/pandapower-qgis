@@ -56,7 +56,7 @@ def get_original_network_from_container(selected_layers):
             if session is not None and session.net is not None:
                 QgsMessageLog.logMessage(
                     f"Found original network from layer: {layer_name}",
-                    level=Qgis.Info
+                    level=Qgis.MessageLevel.Info
                 )
                 return session.net
 
@@ -83,13 +83,13 @@ def power_network(parent, selected_layers) -> None:
         QgsMessageLog.logMessage(
             "Could not find original network. "
             "Export only works for networks that were imported using the import function.",
-            level=Qgis.Warning
+            level=Qgis.MessageLevel.Warning
         )
         parent.iface.messageBar().pushMessage(
             "Export Error",
             "Could not find original network. Only imported networks can be exported. "
             "Please import a network first.",
-            level=Qgis.Warning,
+            level=Qgis.MessageLevel.Warning,
             duration=10
         )
         return
@@ -102,16 +102,16 @@ def power_network(parent, selected_layers) -> None:
     file = QFileDialog.getSaveFileName(None, "Save Network", parent.dir, filters, selected)[0]
 
     if not file:
-        QgsMessageLog.logMessage("Export cancelled by user", level=Qgis.Info)
+        QgsMessageLog.logMessage("Export cancelled by user", level=Qgis.MessageLevel.Info)
         return
 
     try:
         # Create a deep copy of the original network to avoid modifying it
-        # QgsMessageLog.logMessage("Creating deep copy of network...", level=Qgis.Info)
+        # QgsMessageLog.logMessage("Creating deep copy of network...", level=Qgis.MessageLevel.Info)
         net = copy.deepcopy(original_net)
 
         # Save the complete network to JSON
-        # QgsMessageLog.logMessage(f"Saving network to: {file}", level=Qgis.Info)
+        # QgsMessageLog.logMessage(f"Saving network to: {file}", level=Qgis.MessageLevel.Info)
         pp.to_json(net, file)
 
         # Prepare export summary
@@ -142,23 +142,23 @@ def power_network(parent, selected_layers) -> None:
             f"Export successful! Total components preserved: "
             f"bus({bus_count}), line({line_count}), ext_grid({ext_grid_count}), "
             f"load({load_count}), gen({gen_count}), trafo({trafo_count})",
-            level=Qgis.Success
+            level=Qgis.MessageLevel.Success
         )
 
         parent.iface.messageBar().pushMessage(
             "Export Successful",
             f"Network exported to {file} with all components preserved.",
-            level=Qgis.Success,
+            level=Qgis.MessageLevel.Success,
             duration=5
         )
 
     except Exception as e:
         error_msg = f"Error during export: {str(e)}"
-        QgsMessageLog.logMessage(error_msg, level=Qgis.Critical)
+        QgsMessageLog.logMessage(error_msg, level=Qgis.MessageLevel.Critical)
         parent.iface.messageBar().pushMessage(
             "Export Failed",
             error_msg,
-            level=Qgis.Critical,
+            level=Qgis.MessageLevel.Critical,
             duration=10
         )
         import traceback
@@ -250,7 +250,7 @@ def pipes_network(parent, selected_layers) -> None:
                         props[key] = feature[key]
 
                 geom = feature.geometry()
-                if geom.type() == QgsWkbTypes.GeometryType.PointGeometry:
+                if geom.type() == Qgis.GeometryType.Point:
                     if not QgsWkbTypes.isSingleType(geom.wkbType()):
                         # Multi-part points cannot be mapped onto a single bus.
                         selectIds.append(feature.id())
@@ -259,7 +259,7 @@ def pipes_network(parent, selected_layers) -> None:
                     # QgsMessageLog.logMessage("Point: X: " + str(geometry.x()) + ", Y: " + str(geometry.y()),
                     #                         level=Qgis.MessageLevel.Info)
                     props['geodata'] = (geometry.x(), geometry.y())
-                elif geom.type() == QgsWkbTypes.GeometryType.LineGeometry:
+                elif geom.type() == Qgis.GeometryType.Line:
                     if not QgsWkbTypes.isSingleType(geom.wkbType()):
                         # Multi-part lines cannot be mapped onto a single bus.
                         selectIds.append(feature.id())
@@ -380,7 +380,7 @@ def pipes_network(parent, selected_layers) -> None:
             if optional['length_km'] is None:
                 optional['length_km'] = geom.length()
                 uses_derived_length = True
-            if geom.type() == QgsWkbTypes.GeometryType.LineGeometry:
+            if geom.type() == Qgis.GeometryType.Line:
                 if not QgsWkbTypes.isSingleType(geom.wkbType()):
                     # Multi-part lines cannot be mapped onto a single pipe.
                     QgsMessageLog.logMessage(

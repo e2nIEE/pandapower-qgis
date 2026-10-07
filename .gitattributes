@@ -17,11 +17,6 @@ pandapower-qgis/help/source/ export-ignore
 # Local pb_tool staging area, including a stale copy of the plugin zip.
 pandapower-qgis/zip_build/ export-ignore
 
-# Generated from resources.qrc by pyrcc5. qgis-plugin-ci compiles the .qrc
-# itself during packaging and aborts if a file of the built name is also
-# tracked, so the checked-in copy must stay out of the archive.
-pandapower-qgis/resources_rc.py export-ignore
-
 # Repository tooling that is not part of the plugin.
 .github/ export-ignore
 .gitattributes export-ignore

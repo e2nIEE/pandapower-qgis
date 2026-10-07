@@ -260,7 +260,7 @@ def parse_kwargs_string(kwargs_string):
         QgsMessageLog.logMessage(
             f"Parameter parsing failed: {str(e)} | Original: {kwargs_string}",
             "Pandapower",
-            Qgis.Warning
+            Qgis.MessageLevel.Warning
         )
         return {}   #todo: don't run calculation if parsing failed
 
@@ -425,10 +425,10 @@ def show_success_message(parent, title, message):
             iface.messageBar().pushMessage(
                 title,
                 message,
-                level=Qgis.Success,
+                level=Qgis.MessageLevel.Success,
                 duration=5
             )
-        QgsMessageLog.logMessage(f"{title}: {message}", level=Qgis.Success)
+        QgsMessageLog.logMessage(f"{title}: {message}", level=Qgis.MessageLevel.Success)
 
     except Exception as e:
         print(f"⚠️ Error displaying the success message: {str(e)}")
@@ -441,9 +441,9 @@ def show_error_message(parent, message):
             iface.messageBar().pushMessage(
                 "RunPP error",
                 message,
-                level=Qgis.Critical,
+                level=Qgis.MessageLevel.Critical,
                 duration=10
             )
-        QgsMessageLog.logMessage(f"RunPP error: {message}", level=Qgis.Critical)
+        QgsMessageLog.logMessage(f"RunPP error: {message}", level=Qgis.MessageLevel.Critical)
     except Exception as e:
         print(f"⚠️ Error displaying the error message: {str(e)}")

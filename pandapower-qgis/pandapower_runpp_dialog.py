@@ -165,7 +165,7 @@ class ppRunDialog(QDialog):
         '''
 
         #separator = QFrame()
-        #separator.setFrameStyle(QFrame.HLine | QFrame.Sunken)
+        #separator.setFrameStyle(QFrame.Shape.HLine | QFrame.Shadow.Sunken)
         #layout.addWidget(separator)
 
         # Result visualization options
@@ -206,10 +206,10 @@ class ppRunDialog(QDialog):
 
         self.run_button = QPushButton(self.tr("Run Calculation"))
         self.run_button.setDefault(True)
-        self.button_box.addButton(self.run_button, QDialogButtonBox.AcceptRole)
+        self.button_box.addButton(self.run_button, QDialogButtonBox.ButtonRole.AcceptRole)
 
         self.cancel_button = QPushButton(self.tr("Cancel"))
-        self.button_box.addButton(self.cancel_button, QDialogButtonBox.RejectRole)
+        self.button_box.addButton(self.cancel_button, QDialogButtonBox.ButtonRole.RejectRole)
 
         # Connect signals
         #self.button_box.accepted.connect(self.accept)
