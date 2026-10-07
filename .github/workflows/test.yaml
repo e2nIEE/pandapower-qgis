@@ -35,6 +35,15 @@ jobs:
       image: qgis/qgis:${{ matrix.qgis }}-questing
 
     steps:
+      # The QGIS image has no git. Without it actions/checkout falls back to
+      # GitHub's source tarball, which is built with "git archive" and so
+      # drops everything marked export-ignore in .gitattributes -- test/
+      # included, leaving unittest to pick up Python's own "test" package.
+      - name: Install git
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends git
+
       - uses: actions/checkout@v7
 
       # numpy, scipy, pyproj, ... are already installed from apt, and pip cannot
