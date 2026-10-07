@@ -1,6 +1,6 @@
 plugin_path: pandapower-qgis
 github_organization_slug: e2nIEE
-project_slug: pandapower_qgis
+project_slug: pandapower-qgis
 
 # Keep the plugin directory inside the zip as "pandapower-qgis". That is the
 # package name the plugin is registered under on plugins.qgis.org (plugin 3020),
